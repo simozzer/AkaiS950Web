@@ -452,11 +452,17 @@ check('the rate ladder came back', rateBad.length === 0,
       (r.rate.length - rateBad.length) + ' of ' + r.rate.length + ' within 4%' +
       (rateBad.length ? ': ' + rateBad.map(function (p) { return 'rate ' + p.setting; }).join(', ') : ''));
 
-// the law itself, which is what would actually be pasted into audio.js
-check('the rate law is recovered',
-      r.rateFit && near(Math.pow(2, r.rateFit.slope * 20), 2, 0.08),
-      r.rateFit ? 'doubles every ' + (1 / r.rateFit.slope).toFixed(1) +
-                  ' units, built to double every 20' : '-');
+// The law itself, which is what would actually be pasted into audio.js. This machine
+// doubles every 20 units, so the analysis has to say EXPONENTIAL and recover the doubling
+// - where the real S950, measured, turned out to be linear in hertz. Getting the right
+// answer for a machine that behaves the other way is the point of the test.
+check('the rate law is recognised as exponential', r.rateLaw === 'exponential',
+      (r.rateLaw || '-') + ': hertz r2 ' + (r.rateFit ? r.rateFit.r2.toFixed(5) : '-') +
+      ', log2 r2 ' + (r.rateLogFit ? r.rateLogFit.r2.toFixed(5) : '-'));
+check('  and the doubling is recovered',
+      r.rateLogFit && near(Math.pow(2, r.rateLogFit.slope * 20), 2, 0.08),
+      r.rateLogFit ? 'doubles every ' + (1 / r.rateLogFit.slope).toFixed(1) +
+                     ' units, built to double every 20' : '-');
 
 check('the depth law is recovered',
       r.depthFit && near(r.depthFit.slope, 0.55, 0.04),

@@ -657,7 +657,50 @@ law. `lfocal` fits both now and lets the data choose.
 
 Everything else — the depth law, the delay law, the modwheel, desync — needs the re-take.
 
-### The guard that was missing
+### What the second take settled
+
+The transpose was gone and it showed: all 26 clips landed within 30 cents of the pitch
+the plan asked for, and the run lined up to 6 ms. But **29% of its samples sat at or
+beyond full scale** — every clip clipped, the worst of them flat for 87% of its length.
+
+That turns out to matter far less than it should. A clipper is memoryless, so it leaves
+the zero crossings exactly where it found them, and frequency demodulation reads zero
+crossings. The rate and the depth came through; everything to do with level did not.
+
+**The rate law, confirmed independently.** The second take, recorded from a different
+disk with different keys and different pitches, gives
+
+```
+rate = 1.785 + 0.08918 x byte   Hz      r2 0.99998
+```
+
+against the first take’s `1.782 + 0.08930`. Two takes, nothing in common but the machine,
+agreeing to **0.2%**. The same eight points fit an exponential at r2 0.944, so the law is
+not the filter’s law — `lfocal` fits both now and prints which is straighter.
+
+**The depth law.** Depths 20, 40 and 60 give
+
+```
+1.555 cents per unit   r2 1.0000   ->   depth 99 is 153 cents
+```
+
+which lands on the first take’s single clean clip, where depth 99 measured ±149 cents.
+Depths 80 and 99 read low and are excluded — those are the clips whose level swings 20 to
+32 dB, which is the clipping.
+
+**The waveform is a sine**, r 0.998 over 41 cycles, with the first take’s clean clip
+agreeing at r 0.999. Not the triangle a guess would have reached for — and the analysis
+had been quietly assuming one in the modwheel section, a 23% error that only showed up
+once the machine had been asked.
+
+**The timbre check passed**: a pulse and a sawtooth at the same depth read 92.09 and
+91.96 cents. The reading is of the machine, not of the waveform.
+
+Still open: the delay (only byte 99 shows one at all), the modwheel curve (r2 0.875 with
+one rogue point), and desync, where the upper voice of each pair came back barely
+modulated and may not have sounded at all.
+
+### The guards that were missing
 
 None of that was noticed by the analysis. It found *something* within its search band in
 every clip, demodulated whatever that was, and reported depths of 6270 cents with no more
@@ -669,6 +712,16 @@ at, what it did sound at, and whether its level held steady. Clips that fail are
 excluded from every fit, and the reader is told plainly that nothing taken from them means
 anything. `test/lfotest.js` plays a clip three octaves out to prove the guard catches it,
 and one half a semitone out to prove it does not catch that.
+
+The second take added another: **clipping**, which is invisible in every number the tool
+prints. The report now says what fraction of the take is against the stop, names the worst
+clip, and works out how far down to turn it — from the worst clip rather than the average,
+since a take that is half silence hides its own peaks.
+
+One more thing the real machine caught. The modwheel section reads a fundamental and has
+to convert it to a peak, which needs the waveform; it assumed a triangle, which was a
+guess wearing the clothes of a constant. The machine runs a sine, and the difference is
+23%. It now takes the shape the shape section found.
 
 ### Knowing it works before there is a take
 

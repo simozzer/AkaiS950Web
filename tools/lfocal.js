@@ -116,6 +116,21 @@ function demodulate(x, rate, from, to, hintHz, nullHz) {
   return first;
 
   function pass(carrier) {
+    /*
+     * One period of the tone, which nulls every harmonic of it exactly.
+     *
+     * Averaging over several periods instead was tried, on the theory that a deep vibrato
+     * walks the harmonics off the nulls meant to cancel them - it does - and that this was
+     * why one take appeared to have a level swinging by 12 dB where the recording itself
+     * moved 3. It was not: that take was clipped across 29% of its samples, and lengthening
+     * the average moved the reading by a tenth of a decibel.
+     *
+     * What it did do is round the corners off the LFO. A longer boxcar reaches down towards
+     * the wobble itself, and at 12 cycles a second it took enough of the third and fifth
+     * harmonics out of a triangle to make it read as a sine - which is exactly the question
+     * the shape section exists to answer. One period, then, and clipping is the caller's
+     * problem to avoid rather than the filter's to survive.
+     */
     var L = Math.max(2, Math.round(rate / (nullHz || carrier)));
     var n = to - from;
     if (n < 4 * L + 8) return null;
@@ -626,6 +641,66 @@ function analyse(file) {
   console.log('found ' + found.clips.length + ' clips, noise floor ' +
               fmt(found.floorDb, 1) + ' dB below the loudest');
 
+  /*
+   * How much of the take is against the end stop.
+   *
+   * Worth knowing before anything else, because clipping is invisible in every number
+   * this tool prints. Frequency modulation survives it surprisingly well - a memoryless
+   * nonlinearity leaves the zero crossings where they were, so the rate and the depth come
+   * through - but everything to do with level is destroyed, and the distortion products
+   * leak into the demodulator and make a clip look unsteady when it is not.
+   *
+   * A second take of this run came back with 29% of its samples at full scale. It still
+   * settled the rate and the depth, and it settled nothing at all about the delay, the
+   * modwheel or desync.
+   */
+  var clipped = 0, loud = 0;
+  for (var ci = 0; ci < x.length; ci++) {
+    var av = x[ci] < 0 ? -x[ci] : x[ci];
+    if (av >= 0.99996) clipped++;
+    else if (av > 0.891) loud++;                      // within a decibel of the top
+  }
+  var clippedFraction = clipped / x.length;
+
+  // The worst clip, not the average: one clip flat for three quarters of its length is
+  // the one that says how far down to turn it, and an average over a take that also holds
+  // silence between the notes hides it.
+  // Measured over the clips as DETECTED, which needs no alignment - this runs before the
+  // take has been lined up with the plan, because how loud it was recorded is worth knowing
+  // even when nothing else about it can be worked out.
+  var worst = { fraction: 0, clip: null };
+  found.clips.forEach(function (f, fi) {
+    var c = found.clips.length === expected.length ? expected[fi] : null;
+    var from = f.from, to = f.to;
+    var hit = 0, n = 0;
+    for (var i = Math.max(0, from); i < to && i < x.length; i++) {
+      var a2 = x[i] < 0 ? -x[i] : x[i];
+      if (a2 >= 0.99996) hit++;
+      n++;
+    }
+    if (n && hit / n > worst.fraction)
+      worst = { fraction: hit / n, clip: c, at: f.seconds[0] };
+  });
+
+  if (clipped / x.length > 0.001) {
+    // A tone flat-topped for a fraction f of its length was that much too loud: for a ramp,
+    // by 1/(1-f). Three decibels on top of that, so the retake has somewhere to put its
+    // peaks rather than landing exactly on the line.
+    var over = 20 * Math.log10(1 / Math.max(0.05, 1 - worst.fraction)) + 3;
+    console.log('');
+    console.log('  *** ' + fmt(100 * clipped / x.length, 2) + '% of this take is at or beyond full scale.');
+    console.log('  The worst clip is ' + (worst.clip ? worst.clip.label
+                                             : 'the one at ' + fmt(worst.at, 0) + 's') +
+                ', flat for ' + fmt(100 * worst.fraction, 0) + '% of its length.');
+    console.log('  Record it again at least ' + Math.max(6, Math.round(over)) +
+                ' dB quieter. Rate and depth may well survive - a');
+    console.log('  clipper leaves the zero crossings where they were - but every level reading');
+    console.log('  below is meaningless, and the distortion leaks into the pitch track wherever');
+    console.log('  the modulation is deep.');
+  } else if ((clipped + loud) / x.length > 0.25) {
+    console.log('  (peaks are close to full scale but nothing is clipped)');
+  }
+
   var rough = place(found.clips, expected);
   if (rough.matched < expected.length / 2) {
     console.log('');
@@ -646,7 +721,7 @@ function analyse(file) {
   expected.forEach(function (c) { (by[c.analysis] = by[c.analysis] || []).push(c); });
 
   var results = { offset: on.offset, matched: rough.matched, found: found.clips.length,
-                  onsetSpread: on.spread };
+                  onsetSpread: on.spread, clippedFraction: clippedFraction };
 
   // ------------------------------------------------- did it play what it was asked to
   //
@@ -701,7 +776,10 @@ function analyse(file) {
                 '  ' + fmt(m.rate ? m.rate.cycles : null, 0, 6) +
                 '  ' + fmt(m.rate ? m.rate.explains : null, 2, 8) +
                 '  ' + fmt(m.depthCents, 1, 7) + ' cents' + (ok ? '' : '   (not settled)'));
-    if (ok) ratePoints.push({ x: c.setting, y: Math.log2(hz), hz: hz, setting: c.setting });
+    // y is the rate in hertz; the octave fit below re-reads hz for itself. Storing log2
+    // here and fitting THAT as the hertz law was a bug that made both fits identical and
+    // printed log-space numbers as though they were hertz.
+    if (ok) ratePoints.push({ x: c.setting, y: hz, hz: hz, setting: c.setting });
     return { setting: c.setting, hz: hz, ok: ok, measure: m };
   });
 
@@ -858,6 +936,14 @@ function analyse(file) {
   console.log('MODWHEEL  (byte 22, keygroup depth 0)');
   var wheelClip = by.wheel && by.wheel[0];
   results.wheel = [];
+
+  // The wheel section reads a fundamental and has to turn it into a peak, which needs
+  // the waveform. It used to assume a triangle, which was a guess dressed as a constant;
+  // the machine turned out to run a sine, and the difference is 23%. Take the shape the
+  // shape section actually found, and say so when there is none to take.
+  var wheelShape = (results.shape && results.shape.shape && results.shape.shape.length &&
+                    results.shape.shape[0].r > 0.95) ? results.shape.shape[0] : null;
+  var wheelCrest = wheelShape ? wheelShape.crest : SHAPES.sine.crest;
   if (wheelClip) {
     var t2 = demodulate(x, rate, Math.round((wheelClip.from + at.offset + 0.02) * rate),
                         Math.round((wheelClip.to + at.offset - 0.1) * rate), wheelClip.sounds);
@@ -885,7 +971,7 @@ function analyse(file) {
           if (f1 > t2.cents.length) return;
 
           var b = bin(t2.cents, f0, f1, lfoHz, t2.frameRate);
-          var cents = b.amp * fix / SHAPES.triangle.crest;
+          var cents = b.amp * fix / wheelCrest;
           console.log('    ' + String(step.value).padStart(4) + '  ' + fmt(cents, 2, 8));
           results.wheel.push({ cc: step.value, cents: cents, sine: b.amp * fix });
         });
@@ -895,8 +981,8 @@ function analyse(file) {
         if (wheelFit)
           console.log('  ' + fmt(wheelFit.slope * 127, 2) +
                       ' cents across the whole wheel at byte 22 = 99, r2 ' + fmt(wheelFit.r2, 3));
-        console.log('  (read as a triangle, like the shape section found - if that section');
-        console.log('   named something else these are the wrong shape and want redoing)');
+        console.log('  (read as a ' + (wheelShape ? wheelShape.name : 'sine, for want of anything better') +
+                    ', which is what the shape section found)');
       }
     }
   }
@@ -941,10 +1027,13 @@ function analyse(file) {
     while (deg > 180) deg -= 360;
     while (deg < -180) deg += 360;
 
+    var crest = (results.shape && results.shape.shape && results.shape.shape.length &&
+                 results.shape.shape[0].r > 0.95) ? results.shape.shape[0].crest : SHAPES.sine.crest;
     console.log('  ' + c.label.padEnd(12) + '  ' + fmt(r.hz, 2) + ' Hz,  lower ' +
-                fmt(a.amp / SHAPES.triangle.crest, 1) + ' cents, upper ' +
-                fmt(b.amp / SHAPES.triangle.crest, 1) + ' cents,  ' +
-                fmt(deg, 0) + ' degrees apart');
+                fmt(a.amp / crest, 1) + ' cents, upper ' + fmt(b.amp / crest, 1) + ' cents,  ' +
+                fmt(deg, 0) + ' degrees apart' +
+                (b.amp / crest < a.amp / crest * 0.3
+                   ? '   (the upper voice is barely modulated - it may not have sounded)' : ''));
     return { label: c.label, hz: r.hz, degrees: deg, lower: a.amp, upper: b.amp };
   }).filter(Boolean);
 
