@@ -517,23 +517,34 @@ var AkaiAudio = (function () {
    *   - the WAVEFORM is a sine, r 1.000 over 41 cycles, not the triangle a guess would
    *     reach for;
    *   - the DELAY is a fade-in rather than a wait, and its length is a constant divided
-   *     by how far the setting is from the top, which fits at r2 0.99998 where a straight
-   *     line fits at 0.52;
+   *     by how far the setting is from the top, which fits at r2 0.99999 across seven
+   *     rungs where a straight line fits at 0.24;
+   *   - the DESYNC flag does what its name says, and it was worth proving: with the bit
+   *     clear, two voices held a phase difference of 80 degrees to within 3 over six
+   *     seconds and ran at the same rate to four figures - one oscillator, shared. With
+   *     it set they ran at 7.15 and 7.40 Hz and drifted a full turn apart in the same
+   *     six seconds - one oscillator each;
    *   - and it moves pitch and nothing else. At full depth the level moved 0.23 dB.
    */
   var LFO = {
     RATE_HZ_AT_ZERO: 1.785,       // measured: 8 rungs on a straight line, r2 0.99998
-    RATE_HZ_PER_UNIT: 0.08918,
+    RATE_HZ_PER_UNIT: 0.08917,
 
-    DEPTH_CENTS_PER_UNIT: 1.526,  // measured: r2 0.9998, so depth 99 is +-150 cents
+    DEPTH_CENTS_PER_UNIT: 1.527,  // measured: r2 0.9999, so depth 99 is +-150 cents
 
-    // measured: the fade reaches nine tenths of full depth at 7.07/(100-byte) seconds,
-    // and climbs in a straight line to get there - so the whole ramp is that over 0.9.
-    DELAY_FADE_CONSTANT: 7.86,
+    /*
+     * The fade, as the whole ramp rather than the part that was measured.
+     *
+     * Seven rungs put nine tenths of full depth at 7.496/(100-byte) seconds, r2 0.99999.
+     * The climb is a straight line - at byte 99 the fifth, quarter, half and nine-tenth
+     * marks came at 0.354, 2.173, 4.126 and 7.503 seconds, against 0.42, 2.08, 4.17 and
+     * 7.50 for a ramp - so the whole ramp is that constant over nine tenths.
+     */
+    DELAY_FADE_CONSTANT: 8.33,
 
-    // measured: 72.1 cents at the top of the wheel with byte 22 at 99, r2 0.999, and
-    // byte 22 = 50 gave 0.506 of that where proportional would be 0.505.
-    WHEEL_CENTS_AT_FULL: 72.1
+    // measured: 72.3 cents at the top of the wheel with byte 22 at 99, r2 0.999, and
+    // byte 22 = 50 gave 0.509 of that where proportional would be 0.505.
+    WHEEL_CENTS_AT_FULL: 72.3
   };
 
   /**
@@ -556,9 +567,12 @@ var AkaiAudio = (function () {
     return {
       hz: LFO.RATE_HZ_AT_ZERO + (kg.lfoRate || 0) * LFO.RATE_HZ_PER_UNIT,
       cents: cents,
-      // the delay byte is a fade, and at 99 it is a seven-second one
+      // the delay byte is a fade, and at 99 it is an eight-second one
       fadeSeconds: LFO.DELAY_FADE_CONSTANT / Math.max(1, 100 - (kg.lfoDelay || 0)),
-      fromWheel: added
+      fromWheel: added,
+      // bit 2 of the flags: set means this voice runs its own oscillator, clear means
+      // it shares the programme's. 1652 keygroups of 1908 set it.
+      ownOscillator: kg.lfoDesync !== false
     };
   }
 

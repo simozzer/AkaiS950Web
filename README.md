@@ -714,6 +714,10 @@ The third take was clean: peaks at −20 dBFS, nothing clipped, all 26 clips wit
 semitone of the pitch asked for, the run lined up to 7 ms, and every rung of the rate
 ladder explaining 0.99 or better of its own track. This is what it says.
 
+The fourth take, with every key at or below the sample root and the delay rungs
+re-spaced, settled the last of it. What follows is from that take unless a figure says
+otherwise; the earlier ones agree with it everywhere they overlap.
+
 #### Rate — linear in the byte
 
 ```
@@ -754,19 +758,25 @@ It does not wait and then start; it fades in. And the fade time is not linear in
 nor exponential:
 
 ```
-  byte              0      25      50      75      99
-  fade (seconds) 0.068   0.093   0.159   0.311   7.082
+  byte              0      50      75      85      92      96      99
+  fade (seconds) 0.084   0.159   0.314   0.502   0.934   1.891   7.503
 
-  against the byte         r2 0.52
-  against log of the time  r2 0.78
-  against 1/(100 - byte)   r2 0.99998    ->   seconds = 7.07 / (100 - byte)
+  against the byte         r2 0.24
+  against 1/(100 - byte)   r2 0.99999   ->   seconds = 7.50 / (100 - byte)
 ```
 
 A control that idles for three quarters of its travel and then runs away. Byte 50 fades in
-in a sixth of a second; byte 99 takes seven seconds. The evenly spaced ladder that measured
-this was the wrong question — four of its five rungs land inside a third of a second — so
-the run now bunches its delay rungs at 85, 92, 96 and 99, where the law predicts 0.48,
-0.89, 1.78 and 7.08 seconds.
+in a sixth of a second; byte 99 takes seven and a half.
+
+The first ladder to measure this was evenly spaced — 0, 25, 50, 75, 99 — and four of its
+five rungs landed inside a third of a second, which is no way to characterise anything.
+Re-spaced at 85, 92 and 96 the law *predicted* 0.48, 0.89 and 1.78 seconds before the take
+and measured 0.502, 0.934 and 1.891 after it. That is the difference between a curve fitted
+through a point and a law that holds.
+
+The climb is a straight line, which is worth knowing because it is what the emulation
+schedules: at byte 99 the fifth, quarter, half and nine-tenth marks came at 0.354, 2.173,
+4.126 and 7.503 seconds, against 0.42, 2.08, 4.17 and 7.50 for a ramp.
 
 #### Modwheel — proportional, and it is the same LFO
 
@@ -780,13 +790,38 @@ gives 36.1 cents — a ratio of **0.506** where exactly proportional would be 0.
 22 scales the wheel’s contribution proportionally, and the wheel adds about half of what
 the keygroup’s own depth 99 does.
 
-#### Still open: desync
+#### Desync — the flag does what its name says
 
-The two pairs settled nothing, twice. The upper voice of each pair sat two octaves above
-the sample’s root, and the S950 brought it back 12 dB below its partner and too rough to
-demodulate — a 50-word sine stepped at five and a half words a sample is not much of a
-sine. Both voices now sit *below* the root, where the sampler only ever reads the same
-words more slowly, which it does perfectly.
+It took three takes to ask the question properly. The upper voice of each pair sat two
+octaves *above* the sample’s root, and the S950 brought it back 12 dB below its partner and
+too rough to demodulate — a 50-word sine stepped at five and a half words a sample is not
+much of a sine. Moved *below* the root, where the sampler only ever reads the same words
+more slowly, both voices came back at full depth and the answer fell out at once.
+
+The measurement is not a number but a behaviour, so it is watched over time: two notes a
+second and a half apart, and the phase between their wobbles read second by second.
+
+```
+  bit clear          bit set
+  7.142 / 7.165 Hz    7.142 / 7.414 Hz     the two voices’ rates
+  80 79 82 81 79 81   -162 -79 9 98 -179 -94    degrees apart, one second at a time
+```
+
+With the bit **clear** the two voices run at the same rate to four figures and hold their
+phase to within 3 degrees over six seconds: **one oscillator, shared across the programme**.
+With it **set** they run at 7.15 and 7.40 Hz — 3.5% apart — and drift a full turn apart in
+those same six seconds: **one oscillator each, free-running**. The 0.25 Hz difference
+predicts 90 degrees of drift a second; the measurement shows 88.
+
+The emulation models the sharing, since that is the structural fact. It does not model the
+3.5%: one observation of one pair is not a distribution, and inventing a spread to make the
+free-running voices drift convincingly would be making it up.
+
+One thing left unexplained. Two voices on the *shared* oscillator ought to be in phase, and
+they sit a stable 80 degrees apart — 31 ms at this rate. A fixed time offset would point at
+the order in which the machine services its voices, and the way to tell is to repeat the
+pair at a second LFO rate: a fixed *time* offset keeps its milliseconds and changes its
+degrees.
 
 #### Reading the takes back
 

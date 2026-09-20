@@ -1447,6 +1447,28 @@
    * the filter is run at the rate the audio actually leaves at - the sample rate times the
    * playback speed - and the buffer is then played back normally.
    */
+  /*
+   * The programme's own LFO, for keygroups with desync clear.
+   *
+   * One oscillator per distinct rate, made on demand and never stopped: it is a single
+   * node whichever way, and stopping it would lose the phase that sharing exists to
+   * preserve. A voice connects its depth gain to this instead of to one of its own, so
+   * every note on the programme rides the same wobble.
+   */
+  var shared = {};
+
+  function sharedLfo(ac, hz) {
+    var at = hz.toFixed(3);
+    if (!shared[at] || shared[at].ctx !== ac) {
+      var o = ac.createOscillator();
+      o.type = 'sine';
+      o.frequency.value = hz;
+      o.start();
+      shared[at] = { osc: o, ctx: ac };
+    }
+    return shared[at].osc;
+  }
+
   function play(d, e, semitones, honourLoop, vcf, key, loopOver) {
     key = key === undefined ? 'preview' : key;
     var words = wordsOf(d, e);
@@ -1508,9 +1530,20 @@
       var mod = AkaiAudio.lfo(vcf.kg, wheel);
       if (mod) {
         var t1 = ac.currentTime;
-        osc = ac.createOscillator();
-        osc.type = 'sine';
-        osc.frequency.value = mod.hz;
+
+        // Desync clear means the voices share the programme's oscillator, so a note
+        // joining a chord arrives at whatever phase the wobble has already reached.
+        // Desync set gives each voice its own, starting where it starts - which is the
+        // library's usual case, and on the machine those ran at slightly different
+        // rates and drifted apart. Only the sharing is modelled; inventing a spread
+        // from one measured pair would be making it up.
+        var wave = mod.ownOscillator ? null : sharedLfo(ac, mod.hz);
+        if (!wave) {
+          osc = ac.createOscillator();
+          osc.type = 'sine';
+          osc.frequency.value = mod.hz;
+          wave = osc;
+        }
 
         var depth = ac.createGain();
         if (mod.fadeSeconds > 0.01) {
@@ -1520,9 +1553,9 @@
           depth.gain.value = mod.cents;
         }
 
-        osc.connect(depth);
+        wave.connect(depth);
         depth.connect(src.detune);
-        osc.start();
+        if (osc) osc.start();
       }
     }
 

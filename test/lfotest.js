@@ -182,21 +182,22 @@ function emu(rate, depth, delay, toWheel, wheelAt) {
 }
 
 // the rate ladder, as the machine played it
-[[0, 1.788], [25, 3.995], [55, 6.675], [99, 10.613]].forEach(function (m) {
+[[0, 1.789], [25, 3.994], [55, 6.679], [99, 10.611]].forEach(function (m) {
   var got = emu(m[0], 50, 0).hz;
   check('rate ' + m[0] + ' plays at ' + m[1] + ' Hz', near(got, m[1], m[1] * 0.02),
         'emulation says ' + got.toFixed(3));
 });
 
 // the depth ladder
-[[20, 29.87], [60, 92.18], [99, 150.21]].forEach(function (m) {
+[[20, 29.74], [60, 91.93], [99, 150.22]].forEach(function (m) {
   var got = emu(60, m[0], 0).cents;
   check('depth ' + m[0] + ' swings ' + m[1] + ' cents', near(got, m[1], m[1] * 0.03),
         'emulation says ' + got.toFixed(1));
 });
 
 // the delay, which is a fade and reaches nine tenths at 7.07/(100-byte)
-[[0, 0.068], [50, 0.159], [75, 0.311], [99, 7.082]].forEach(function (m) {
+[[0, 0.084], [50, 0.159], [75, 0.314], [85, 0.502], [92, 0.934], [96, 1.891],
+ [99, 7.503]].forEach(function (m) {
   var ninety = emu(60, 99, m[0]).fadeSeconds * 0.9;
   check('delay ' + m[0] + ' fades in by ' + m[1] + 's',
         near(ninety, m[1], Math.max(0.03, m[1] * 0.1)),
@@ -204,14 +205,23 @@ function emu(rate, depth, delay, toWheel, wheelAt) {
 });
 
 // the wheel, at both the settings that were measured
-check('a full wheel at byte 22 = 99 adds 71.5 cents',
-      near(emu(60, 0, 0, 99, 127).cents, 71.45, 2),
+check('a full wheel at byte 22 = 99 adds 71.8 cents',
+      near(emu(60, 0, 0, 99, 127).cents, 71.77, 2),
       'emulation says ' + emu(60, 0, 0, 99, 127).cents.toFixed(1));
 check('  and at byte 22 = 50 adds half of that',
-      near(emu(60, 0, 0, 50, 127).cents, 36.14, 2),
+      near(emu(60, 0, 0, 50, 127).cents, 36.52, 2),
       'emulation says ' + emu(60, 0, 0, 50, 127).cents.toFixed(1));
 check('  and nothing at all with the wheel down',
       emu(60, 0, 0, 99, 0) === null, 'silent');
+
+// The desync flag, settled by watching two voices for six seconds: with the bit clear
+// they held 80 degrees apart to within 3 and ran at the same rate to four figures, and
+// with it set they ran at 7.15 and 7.40 Hz and drifted a whole turn apart.
+check('desync set gives the voice its own oscillator',
+      emu(60, 99, 0) .ownOscillator === true, 'own');
+check('  and desync clear shares the one the programme owns',
+      Audio.lfo({ lfoRate: 60, lfoDepth: 99, lfoDelay: 0, lfoDepthToWheel: 0,
+                  lfoDesync: false }, 0).ownOscillator === false, 'shared');
 
 // the depth is zero in most of the library, and that has to cost nothing
 check('a keygroup with no depth and no wheel builds no oscillator',
