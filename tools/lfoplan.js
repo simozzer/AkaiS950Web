@@ -51,7 +51,22 @@
 var VEL = 100;
 var TONE_HZ = 400;          // the pitch the tone is recorded at, on the root key
 var ROOT = 60;              // the pitch the tone samples are recorded at
-var FIRST_KEY = 42;         // keys run upward from here, one per keygroup
+
+/*
+ * Where the tests sit on the keyboard.
+ *
+ * Everything at or below the root, so no zone is ever played faster than it was
+ * recorded. The third take showed why: the desync pairs put their upper voice two
+ * octaves above the root, and it came back 12 dB below its partner and too rough to
+ * read - a 50-word sine stepped at five and a half words a sample is not much of a sine.
+ * Below the root the sampler reads the same words more slowly, which it does perfectly.
+ *
+ * The desync pairs are reserved first because their two voices have to be exactly two
+ * octaves apart, and everything else fills in around them.
+ */
+var FIRST_KEY = 32;
+var DESYNC_KEYS = [{ lower: 30, upper: 54 }, { lower: 31, upper: 55 }];
+var RESERVED = [30, 31, 54, 55];
 
 /*
  * Keygroup bytes, by offset. 43/44/45 sit inside zone 1's span but belong to the
@@ -121,8 +136,14 @@ var nextKey = FIRST_KEY;
  * `key` places the keygroup somewhere other than the next free key, which the desync
  * pairs need: their two voices have to be exactly two octaves apart.
  */
+/** The next key nothing has claimed. */
+function freeKey() {
+  while (RESERVED.indexOf(nextKey) >= 0) nextKey++;
+  return nextKey++;
+}
+
 function test(spec) {
-  var key = spec.key === undefined ? nextKey++ : spec.key;
+  var key = spec.key === undefined ? freeKey() : spec.key;
   var set = {};
   Object.keys(BASE).forEach(function (k) { set[k] = BASE[k]; });
   Object.keys(spec.set || {}).forEach(function (k) { set[k] = spec.set[k]; });
@@ -175,17 +196,21 @@ function test(spec) {
 
 /* --- the delay ladder ------------------------------------------------------
  *
- * Twelve seconds each, because the whole question is how long the machine waits and a
- * clip has to outlast the answer. Delay 0 keeps its place as the section's own
- * reference: it costs five seconds, and it means the section can be recognised without
- * trusting the clip count of everything before it.
+ * The rungs are bunched at the top because that is where the machine keeps everything.
+ * An evenly spaced ladder - 0, 25, 50, 75, 99 - measured 0.04, 0.05, 0.12, 0.34 and 7.7
+ * seconds: four rungs crowded into a third of a second and then a jump of twenty-fold.
+ * Spacing them evenly in the byte spaced them absurdly in what they do.
+ *
+ * It is also a fade-in and not a wait. At delay 0 the wobble is at full depth within a
+ * twentieth of a second; at 99 it climbs smoothly for nearly eight. So the clips at the
+ * top need to outlast the climb, and the ones at the bottom need almost nothing.
  */
-[0, 25, 50, 75, 99].forEach(function (d) {
+[[0, 4], [50, 4], [75, 6], [85, 12], [92, 12], [96, 16], [99, 16]].forEach(function (d) {
   test({
-    section: 'delay ladder', analysis: 'delay', label: 'delay ' + d, setting: d,
-    hold: d === 0 ? 5 : 12,
-    set: { 15: d, 16: MID_RATE, 17: 99 },
-    why: 'delay ladder, ' + d
+    section: 'delay ladder', analysis: 'delay', label: 'delay ' + d[0], setting: d[0],
+    hold: d[1],
+    set: { 15: d[0], 16: MID_RATE, 17: 99 },
+    why: 'delay ladder, ' + d[0]
   });
 });
 
@@ -264,15 +289,17 @@ test({
  * Twenty-four keys apart gives that interval exactly, with no tuning of any kind - which
  * is what the first version of this run used a zone transpose for, and should not have.
  *
+ * Both voices sit below the root now. When the upper one was two octaves ABOVE it, the
+ * third take brought it back 12 dB quieter than its partner and too rough to demodulate,
+ * and the section settled nothing twice over.
+ *
  * This is the speculative part of the run. If the two voices turn out to be
  * indistinguishable it settles nothing, and the report says so rather than fitting a
  * number to noise.
  */
 [{ flag: 0, name: 'desync off' }, { flag: FLAG_DESYNC, name: 'desync on' }].forEach(function (v) {
-  // The lower voice takes the next free key and the upper one sits two octaves above it,
-  // clear of everything else. Both keys are worked out here rather than as they are handed
-  // out, so the clip can name its partner before the partner exists.
-  var lower = nextKey++, upper = lower + 24;
+  var pair = DESYNC_KEYS[DESYNC_KEYS.used = (DESYNC_KEYS.used || 0) + 1, DESYNC_KEYS.used - 1];
+  var lower = pair.lower, upper = pair.upper;
 
   test({
     section: 'desync', analysis: 'desync', label: v.name, key: lower,

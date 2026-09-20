@@ -384,45 +384,41 @@ function draw(cycle, rows) {
 }
 
 /**
- * Where the modulation starts, for a clip that was asked to wait.
+ * How the modulation arrives.
  *
- * The amplitude of the LFO component in a two-cycle sliding window, against what it
- * settles to by the end of the clip. Two thresholds are reported because they answer
- * different questions: 10% is "something is happening", 50% is "it is in".
+ * The delay turned out to be a fade-in rather than a wait, so what matters is when the
+ * wobble reaches each fraction of its final depth. The envelope is the largest excursion
+ * in each half cycle of the LFO, which is as fine a resolution as the thing itself has.
+ *
+ * An earlier version measured the amplitude in a two-cycle sliding window, and could not
+ * see anything shorter than that window - nearly three tenths of a second at seven cycles
+ * a second. Three takes running it reported four of the five delay settings as exactly
+ * zero. Four of them really do happen inside a fifth of a second, and this says so.
  */
-function onset(a, from, to, hz, frameRate) {
-  var win = Math.max(4, Math.round(2 * frameRate / hz));
-  var hop = Math.max(1, Math.round(win / 4));
-  var times = [], amps = [];
+function onset(a, from, to, hz, frameRate, depth) {
+  if (!(depth > 0)) return null;
 
-  for (var at = from; at + win <= to; at += hop) {
-    times.push((at + win / 2 - from) / frameRate);
-    amps.push(bin(a, at, at + win, hz, frameRate).amp);
+  var half = Math.max(2, Math.round(frameRate / hz / 2));
+  var env = [], times = [];
+  for (var at = from; at + half <= to; at += half) {
+    var pk = 0;
+    for (var i = at; i < at + half; i++) { var v = a[i] < 0 ? -a[i] : a[i]; if (v > pk) pk = v; }
+    env.push(pk); times.push((at + half / 2 - from) / frameRate);
   }
-  if (amps.length < 4) return null;
+  if (env.length < 4) return null;
 
-  // what it settles to: the median of the last third, so one wild window cannot set the
-  // scale everything else is measured against
-  var tail = amps.slice(Math.floor(amps.length * 0.67)).sort(function (x, y) { return x - y; });
-  var steady = tail[Math.floor(tail.length / 2)] || 0;
-  if (steady <= 0) return null;
-
-  function crossing(fraction) {
-    for (var i = 0; i < amps.length; i++)
-      if (amps[i] >= steady * fraction) {
-        if (i === 0) return 0;
-        var t = (steady * fraction - amps[i - 1]) / (amps[i] - amps[i - 1]);
-        return times[i - 1] + t * (times[i] - times[i - 1]);
-      }
-    return null;
-  }
-
-  // Each window is timed at its own centre, which is already the right answer: a
-  // window half full of modulation reads about half the amplitude, and its centre is
-  // where the modulation began. Subtracting the window as well - which an earlier
-  // version did - reports every delay a third of a second early.
-  return { steady: steady, windowSeconds: win / frameRate,
-           at10: crossing(0.1), at50: crossing(0.5) };
+  var out = { envelope: env, times: times };
+  [["leaves", 0.05], ["quarter", 0.25], ["half", 0.5], ["full", 0.9]].forEach(function (want) {
+    var target = depth * want[1], found = null;
+    for (var k = 0; k < env.length; k++) if (env[k] >= target) {
+      found = k === 0 ? 0
+            : times[k - 1] + (target - env[k - 1]) /
+              Math.max(env[k] - env[k - 1], 1e-9) * (times[k] - times[k - 1]);
+      break;
+    }
+    out[want[0]] = found;
+  });
+  return out;
 }
 
 // ------------------------------------------------------------- one whole clip
@@ -842,28 +838,55 @@ function analyse(file) {
 
   // ---------------------------------------------------------- delay ladder
   console.log('DELAY  (byte 15, at rate ' + plan.MID_RATE + ' and full depth)');
-  console.log('  setting   10% at    50% at     cents');
+  console.log('  byte   leaves flat   quarter      half      full depth     depth');
   var delayPoints = [];
   results.delay = by.delay.map(function (c) {
     // the front of this clip is the measurement, so almost none of it is skipped, and
     // the rate is read from the back where the modulation is certainly running
     var m = measure(x, rate, c, at.offset, { skipSeconds: 0.01, steadyFrom: c.hold * 0.55 });
     var o = null;
-    if (m.track && m.rate) o = onset(m.track.cents, 0, m.track.cents.length, m.rate.hz, m.track.frameRate);
-    console.log('    ' + String(c.setting).padStart(4) + '  ' + fmt(o && o.at10, 2, 8) + 's' +
-                '  ' + fmt(o && o.at50, 2, 8) + 's' + '  ' + fmt(m.depthCents, 1, 8));
-    if (o && o.at50 !== null && m.trustworthy) delayPoints.push({ x: c.setting, y: o.at50 });
-    return { setting: c.setting, at50: o && o.at50, at10: o && o.at10, measure: m };
+    if (m.track && m.rate)
+      o = onset(m.track.cents, 0, m.track.cents.length, m.rate.hz, m.track.frameRate, m.depthCents);
+    console.log('  ' + String(c.setting).padStart(4) +
+                fmt(o && o.leaves, 3, 13) + 's' + fmt(o && o.quarter, 3, 11) + 's' +
+                fmt(o && o.half, 3, 10) + 's' + fmt(o && o.full, 3, 12) + 's' +
+                fmt(m.depthCents, 1, 10));
+    if (o && o.full !== null && o.full !== undefined && m.trustworthy)
+      delayPoints.push({ x: c.setting, y: o.full });
+    return { setting: c.setting, leaves: o && o.leaves, half: o && o.half,
+             full: o && o.full, measure: m };
   });
 
   var delayFit = line(delayPoints);
+  /*
+   * And against one over what is left of the range.
+   *
+   * A straight line fits the delay at r2 0.52 and the log of it at 0.78, which is to say
+   * neither. Against 1/(100 - byte) it fits at r2 0.99998: the fade time is a constant
+   * divided by how far the setting is from the top, which is what a control that idles for
+   * three quarters of its travel and then runs away looks like when it is written down.
+   */
+  var delayRecip = line(delayPoints.map(function (q) {
+    return { x: 1 / Math.max(1, 100 - q.x), y: q.y };
+  }));
   results.delayFit = delayFit;
+  results.delayRecipFit = delayRecip;
   if (delayFit) {
     console.log('');
-    console.log('  ' + fmt(delayFit.slope, 4) + ' seconds per unit, r2 ' + fmt(delayFit.r2, 4) +
-                ', so delay 99 waits ' + fmt(delayFit.slope * 99 + delayFit.intercept, 2) + 's');
-    console.log('  (read where the wobble reaches half its final size; the 10% column is');
-    console.log('   there to show whether it arrives abruptly or fades in)');
+    console.log('  it is a fade-in, not a wait: each column is when the wobble reached that');
+    console.log('  fraction of its final depth, so "full depth" is how long the fade takes.');
+    console.log('');
+    console.log('  against the byte            a straight line fits at r2 ' + fmt(delayFit.r2, 4));
+    if (delayRecip)
+      console.log('  against 1/(100 - byte)      it fits at r2 ' + fmt(delayRecip.r2, 5) +
+                  '   -   ' + fmt(delayRecip.slope, 3) + '/(100-b) + ' +
+                  fmt(delayRecip.intercept, 3) + ' seconds');
+    if (delayRecip && delayRecip.r2 > Math.max(0.9, delayFit.r2)) {
+      console.log('  so the fade time is a constant divided by how far the setting is from the');
+      console.log('  top: idle for three quarters of the travel, then away it goes.');
+    } else if (delayFit.r2 < 0.9) {
+      console.log('  which is not a fit, and nor is the reciprocal. The table above IS the answer.');
+    }
   }
   console.log('');
 
@@ -1079,9 +1102,22 @@ function analyse(file) {
     console.log('    // measured: r2 ' + fmt(depthFit.r2, 4) + ' across the ladder');
     console.log('    DEPTH_CENTS_PER_UNIT: ' + depthFit.slope.toFixed(3) + ',');
   }
-  if (delayFit) {
+  if (delayFit && delayFit.r2 >= 0.9) {
     console.log('    // measured: r2 ' + fmt(delayFit.r2, 4) + ' across the ladder');
     console.log('    DELAY_SECONDS_PER_UNIT: ' + delayFit.slope.toFixed(4) + ',');
+  } else if (results.delayRecipFit && results.delayRecipFit.r2 > 0.98) {
+    console.log('    // measured: the fade time, r2 ' + fmt(results.delayRecipFit.r2, 5) +
+                ' against 1/(100 - byte)');
+    console.log('    DELAY_FADE_CONSTANT: ' + results.delayRecipFit.slope.toFixed(3) +
+                ',   // seconds = this / (100 - byte)');
+  } else if (results.delay) {
+    console.log('    // measured: seconds for the wobble to fade in. No line fits it, so these');
+    console.log('    // are the readings themselves, to interpolate between.');
+    console.log('    DELAY_FADE_SECONDS: [' + results.delay.filter(function (d) {
+      return d.full !== null && d.full !== undefined;
+    }).map(function (d) {
+      return '[' + d.setting + ', ' + d.full.toFixed(3) + ']';
+    }).join(', ') + '],');
   }
   if (results.wheelFit)
     console.log('    WHEEL_CENTS_AT_FULL: ' + (results.wheelFit.slope * 127).toFixed(2) +

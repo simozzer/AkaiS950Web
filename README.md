@@ -700,6 +700,97 @@ Still open: the delay (only byte 99 shows one at all), the modwheel curve (r2 0.
 one rogue point), and desync, where the upper voice of each pair came back barely
 modulated and may not have sounded at all.
 
+### What the LFO does
+
+The third take was clean: peaks at −20 dBFS, nothing clipped, all 26 clips within a
+semitone of the pitch asked for, the run lined up to 7 ms, and every rung of the rate
+ladder explaining 0.99 or better of its own track. This is what it says.
+
+#### Rate — linear in the byte
+
+```
+rate = 1.785 + 0.08918 x byte   Hz      r2 0.99998
+```
+
+So byte 0 is 1.79 Hz and byte 99 is 10.61 Hz. Fitted in log2 hertz the same eight points
+give r2 0.944, so this is **not** the filter’s exponential law — and the first take, from
+a different disk with different keys and pitches, gave `1.782 + 0.08930`. Two takes
+agreeing to 0.2%.
+
+#### Depth — proportional, and about a semitone and a half at full
+
+```
+  byte     0     20     40     60     80     99
+  cents  0.04  29.87  60.95  92.18 122.39 150.21     1.526 cents per unit, r2 0.9998
+```
+
+Peak deviation, so depth 99 swings ±150 cents — three semitones peak to peak. The first
+take’s one readable clip measured ±149 at the same setting.
+
+#### Waveform — a sine
+
+r **1.000** against a sine template over 41 cycles, with a triangle second at 0.993.
+Symmetric too: −153.3 to +148.2 cents. This is worth stating plainly because the analysis
+had been quietly assuming a triangle in its modwheel arithmetic, which is a 23% error, and
+nothing but asking the machine would have found it.
+
+#### It is vibrato and nothing else
+
+At full depth the level moves **0.23 dB** peak to peak, and 0.01 dB of that at the LFO’s
+own frequency. The pitch moves 150 cents. The earlier take appeared to show 20–32 dB of
+level movement, which was entirely its own clipping.
+
+#### Delay — a fade-in, and a reciprocal law
+
+It does not wait and then start; it fades in. And the fade time is not linear in the byte,
+nor exponential:
+
+```
+  byte              0      25      50      75      99
+  fade (seconds) 0.068   0.093   0.159   0.311   7.082
+
+  against the byte         r2 0.52
+  against log of the time  r2 0.78
+  against 1/(100 - byte)   r2 0.99998    ->   seconds = 7.07 / (100 - byte)
+```
+
+A control that idles for three quarters of its travel and then runs away. Byte 50 fades in
+in a sixth of a second; byte 99 takes seven seconds. The evenly spaced ladder that measured
+this was the wrong question — four of its five rungs land inside a third of a second — so
+the run now bunches its delay rungs at 85, 92, 96 and 99, where the law predicts 0.48,
+0.89, 1.78 and 7.08 seconds.
+
+#### Modwheel — proportional, and it is the same LFO
+
+```
+  wheel    0    16    32    48    64    80    96   112   127
+  cents  0.00 10.04 17.06 28.53 35.96 46.96 55.20 64.22 71.45    r2 0.999
+```
+
+72.1 cents across the whole wheel at byte 22 = 99. At byte 22 = 50 the same full wheel
+gives 36.1 cents — a ratio of **0.506** where exactly proportional would be 0.505. So byte
+22 scales the wheel’s contribution proportionally, and the wheel adds about half of what
+the keygroup’s own depth 99 does.
+
+#### Still open: desync
+
+The two pairs settled nothing, twice. The upper voice of each pair sat two octaves above
+the sample’s root, and the S950 brought it back 12 dB below its partner and too rough to
+demodulate — a 50-word sine stepped at five and a half words a sample is not much of a
+sine. Both voices now sit *below* the root, where the sampler only ever reads the same
+words more slowly, which it does perfectly.
+
+#### Reading the takes back
+
+A take belongs to the plan it was recorded from, since the analysis identifies a clip by
+where it falls in the run. The numbers above came from a take made at `1c88f45`; reading
+it with a later plan produces nonsense, quietly. To re-read an old take, put its plan back
+first:
+
+```
+git show 1c88f45:tools/lfoplan.js > tools/lfoplan.js
+```
+
 ### The guards that were missing
 
 None of that was noticed by the analysis. It found *something* within its search band in

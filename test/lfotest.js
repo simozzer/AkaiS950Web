@@ -235,9 +235,12 @@ console.log('the delay:');
   var x = play(TONES.SAW, lfodisk.RATE, 12, 1, { hz: 3.2, cents: 54, delay: d });
   var m = lfocal.measure(x, OUT_RATE, { from: 0, to: 12, sounds: plan.TONE_HZ },
                          0, { skipSeconds: 0.02, steadyFrom: 7 });
-  var on = lfocal.onset(m.track.cents, 0, m.track.cents.length, m.rate.hz, m.track.frameRate);
-  check('a wait of ' + d + 's is found', near(on.at50, d, 0.35),
-        'read ' + on.at50.toFixed(2) + 's');
+  var on = lfocal.onset(m.track.cents, 0, m.track.cents.length, m.rate.hz,
+                        m.track.frameRate, m.depthCents);
+  // this machine switches the LFO on rather than fading it in, so leaving flat and
+  // reaching full depth are the same moment - the real one fades, and the columns differ
+  check('a wait of ' + d + 's is found', near(on.leaves, d, 0.25),
+        'leaves flat at ' + on.leaves.toFixed(2) + 's, full at ' + on.full.toFixed(2) + 's');
 });
 
 /* --- two voices at once ---------------------------------------------------- */
