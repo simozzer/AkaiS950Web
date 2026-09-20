@@ -213,6 +213,7 @@ Everything that checks the app, or was used to work the format out, lives beside
 | `vcftest.js` | measures the VCF — flat passband, −3 dB at cutoff, 36 dB/octave — and checks the calibrator recovers a mapping it is not given |
 | `keycaltest.js` | checks the key-tracking calibrator recovers a fraction it is not told |
 | `miditest.js` | reads the calibration MIDI file back and checks it matches the plan |
+| `lfotest.js` | builds an S950 whose LFO behaves in a way chosen in advance, plays the whole run through it and checks the analysis finds that behaviour without being told it |
 
 ### `tools/` — what made it
 
@@ -225,6 +226,10 @@ Everything that checks the app, or was used to work the format out, lives beside
 | `emulate.js` | renders the run through the emulation, as a WAV |
 | `vcfcal.js` | derives the real cutoff mapping from recordings of the hardware |
 | `keycal.js` | what key-to-filter tracking means, measured from three notes |
+| `lfoplan.js` | the LFO calibration run, described once |
+| `lfodisk.js` | builds the `LFOCAL` disk from nothing: three generated tones and 28 keygroups |
+| `lfomidi.js` | writes that run as a Standard MIDI File |
+| `lfocal.js` | demodulates a take of it and reports what the LFO actually does |
 | `probe.js`, `ram.js`, `zones.js`, `repair.js` | one-off diagnostics from working the format out |
 | `makezip.js` | builds the downloadable bundle — the page and what it loads, read out of `index.html` rather than listed by hand |
 | `make-expected.ps1` | dumps what the C# sees, for `test/verify.js` to diff against |
@@ -443,7 +448,7 @@ whatever the edit touched, including the ones that resize a file and move things
 
 Dragging an envelope corner is one step, not one per mouse move.
 
-## Calibrating the emulation
+## Calibrating the filter and the envelopes
 
 The filter and envelope model is measured against the machine rather than guessed at.
 Everything the measurement needs is generated from one file, `tools/benchplan.js`, so the disk,
@@ -505,6 +510,117 @@ hear - Web Audio's scheduling, the voice handling, the release. The page used to
 `tools/benchcal.js` to read; it was removed once the model stopped moving. Recording the page
 through the operating system, or restoring the button from the history, is the way back
 to that check if the playback path ever comes under suspicion again.
+
+## Calibrating the LFO
+
+A keygroup stores an LFO as three numbers — delay (byte 15), rate (16) and depth (17) —
+plus a desync flag and two bytes saying how far the modwheel and aftertouch may add to
+the depth. Every one of them is 0..99, and none of them is in any unit at all.
+
+**The emulation has no LFO yet**, and it is not getting one from guesses. This is the
+same shape of apparatus as the filter run — a plan, a disk, a MIDI file, an analysis —
+aimed at turning those five bytes into seconds, hertz and cents.
+
+```
+node tools/lfodisk.js build                 # writes tools/LFOCAL.img and .hfe
+node tools/lfodisk.js check tools/LFOCAL.img
+node tools/lfomidi.js                       # writes tools/AkaiLfoCalibration.mid
+node test/lfotest.js                        # the whole chain, end to end
+```
+
+The disk is built from nothing rather than from a library image, so it carries no audio
+but its own and can be rebuilt byte for byte by anyone. It is not in the repo for that
+reason. The run lasts four minutes and sixteen seconds.
+
+### What it plays
+
+A steady looped tone, not noise: the filter run measures a spectrum, where noise is
+ideal, and an LFO moves pitch, which noise does not have. 250 Hz at 20 kHz makes a
+period exactly 80 words and 125 periods exactly 10,000, so the loop is the whole sample
+and joins onto itself with no discontinuity at all — a loop that clicked twice a second
+would put a spike into the pitch track every time round and be read as modulation.
+
+Three of them, band-limited by construction:
+
+| | |
+|---|---|
+| `SAW` | 36 harmonics. What the ladders play — strong, evenly spaced partials |
+| `SINE` | the fundamental alone, so a wobble in the level is plainly a wobble in the level |
+| `PULSE` | a quarter-width rectangle. A different spectrum entirely, played at a setting the sawtooth also plays |
+
+Every keygroup transposes its zone back towards the samples’ root, so whichever key a
+test lives on, the note sounds at the same 250 Hz and a take can be checked by ear in
+seconds.
+
+### What it asks
+
+Eight rungs of rate, six of depth, five of delay; one slow deep clip held sixteen
+seconds to see the waveform; a sine to say whether the LFO moves pitch or level; a pulse
+at a depth the sawtooth also plays, as a check that a reading belongs to the machine and
+not to the waveform; a wheel climbing through nine steps of one held note; and two pairs
+of overlapping voices, with and without desync.
+
+The **desync** pair is the speculative one. The flag is set in 1652 keygroups of 1908, so
+whatever it does is the normal case — the guess is that it gives each voice its own LFO
+rather than sharing one. Two notes started a second and a half apart say whether their
+wobbles line up. They are two octaves apart, which is not a musical choice: the tracker
+isolates a tone by averaging over exactly one period of it, and that puts a null on every
+multiple of its own frequency, so two octaves up lands the second voice exactly on one.
+
+### How the pitch is read
+
+By spectrum it would be hopeless — a few tens of cents at a few cycles a second, which no
+useful window length resolves. So the tone is demodulated, the way an FM receiver does
+it: multiply by a cosine and a sine at the tone’s own frequency, average each product
+over precisely one period of that tone, and take the angle of the pair. A boxcar average
+of length *T* nulls every multiple of *1/T*, so averaging over one period removes every
+harmonic exactly — which is why a 36-harmonic sawtooth reads as cleanly as a sine.
+
+Two things in that were wrong at first, and the test caught both:
+
+- **The loudest thing in the clip is not the tone.** Frequency modulation spreads a tone
+  into sidebands, and near a modulation index of 2.4 the centre of it vanishes entirely,
+  so the peak of the spectrum sat three hertz off and the averaging landed between the
+  harmonics instead of on them. The mean of the instantaneous frequency *is* the carrier,
+  so it demodulates once to find out where the tone really is and then again there.
+- **A depth read as the highest point of the folded cycle is two samples out of
+  thousands**, and every smoothing in the chain rounds a corner off them: a triangle at
+  12 Hz lost a seventh of its peak that way, which is the difference between a depth law
+  that looks linear and one that does not. It is read at the fundamental instead, with
+  the tracker’s own response — every boxcar in it, known exactly — divided back out, and
+  converted to a peak through whichever waveform the shape section identified.
+
+The rate is looked for in the pitch *and* in the level, because taking it from the pitch
+alone would find nothing at all in an LFO that turned out to move the level instead, and
+"found nothing" is the wrong answer to that question.
+
+### Recording it
+
+Load `LFOCAL`, select it, point a sequencer at the S950 on MIDI channel 1, record the
+audio and play `AkaiLfoCalibration.mid`. Then:
+
+```
+node tools/lfocal.js take.wav
+```
+
+which prints every reading with how well it was determined beside it, draws the LFO
+waveform as it folded, and ends with a block to paste into `audio.js` once there is an
+LFO there for it to go in.
+
+### Knowing it works before there is a take
+
+Nobody has recorded one, so `test/lfotest.js` builds an S950 that does not exist: a rate
+that doubles every 20 units, a depth of 0.55 cents per unit, a delay of 45 ms per unit
+and a triangle. None of those is a guess at what a real S950 does — they are numbers
+chosen to be nothing like round and nothing like each other, so a reading that comes out
+close cannot be close by luck. The tone is rendered the way the sampler renders it: the
+very words `lfodisk.js` writes to the disk, read out of a loop at a rate the LFO moves.
+
+It plays the whole 256-second run through that machine, writes a WAV, and hands `lfocal`
+the file and nothing else. It recovers 0.550 cents per unit, doubling every 20.0 units,
+0.0450 seconds per unit, and the word *triangle*.
+
+## The format, written down
 
 The format itself is written up in [**S950-Disk-Format.pdf**](docs/S950-Disk-Format.pdf):
 sixteen pages on the container, the MFM encoding, the directory and allocation table, the

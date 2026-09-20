@@ -26,3 +26,12 @@ expected.json
 DSKA0000-bench.hfe
 
 node_modules/
+
+# The LFO calibration disk, built from nothing by lfodisk.js - three generated tones and
+# a 28-keygroup programme, both derived from lfoplan.js. Deterministic, so it is rebuilt
+# rather than carried:
+#
+#   node tools/lfodisk.js build
+#   node tools/lfodisk.js check tools/LFOCAL.img
+tools/LFOCAL.img
+tools/LFOCAL.hfe

@@ -11,9 +11,13 @@ var os = require('os');
 var path = require('path');
 var Audio = require('../audio.js');
 var Akai = require('../akai.js');
-var W = __dirname + '/';
+// The checkers moved into test/ and the calibration rig into tools/, but the bench disk
+// stayed in the root where every other test expects it - so neither of the two things
+// this reaches for lives beside it any more.
+var ROOT = path.join(__dirname, '..') + path.sep;
+var image = process.argv[2] || ROOT + 'DSKA0000-bench.hfe';
 
-var disk = Akai.load('x', new Uint8Array(fs.readFileSync(W + 'DSKA0000-bench.hfe')));
+var disk = Akai.load('x', new Uint8Array(fs.readFileSync(image)));
 var smp = null;
 disk.entries.forEach(function (e) { if (e.type === 'S' && e.name.trim() === 'NOISE') smp = e; });
 var words = disk.sampleWords12(smp);
@@ -66,7 +70,7 @@ var problems = 0;
   fs.writeFileSync(file, wav(joined, RATE));
 
   var out = require('child_process').execSync(
-    'node "' + W + 'keycal.js" "' + file + '" ' + NOTES.join(',') + ' "' + W + 'DSKA0000-bench.hfe"',
+    'node "' + ROOT + 'tools' + path.sep + 'keycal.js" "' + file + '" ' + NOTES.join(',') + ' "' + image + '"',
     { encoding: 'utf8' });
 
   var m = out.match(/moves (-?[\d.]+) octaves per octave/);
