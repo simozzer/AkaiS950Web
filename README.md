@@ -203,6 +203,9 @@ to match the original file **byte for byte**. All 101 do.
 | `looptest.js` | the loop finder, against the loops the library shipped with |
 | `selftest.html` | end-to-end test of the interface |
 | `serve.js` | static server, for testing or hosting |
+| `docs/tutorial.md` | the walkthrough: open a disk, change something, write it back |
+| `docs/S950-Disk-Format.pdf` | how the format works, in fourteen pages |
+| `docs/shots.js` | regenerates the screenshots by driving a real browser |
 
 ## Editing
 
@@ -420,6 +423,10 @@ hear - Web Audio's scheduling, the voice handling, the release. The page used to
 through the operating system, or restoring the button from the history, is the way back
 to that check if the playback path ever comes under suspicion again.
 
-The format itself is documented in `..\AkaiS950List\S950-Disk-Format.pdf`.
+The format itself is written up in [**S950-Disk-Format.pdf**](docs/S950-Disk-Format.pdf):
+fourteen pages on the container, the MFM encoding, the directory and allocation table, the
+sample and program records, and the arena they share. Everything in it was worked out by
+reading the library and confirmed on hardware; this code is that document in executable
+form.
 
 

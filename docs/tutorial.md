@@ -172,6 +172,11 @@ The Node scripts in the repository check the disk format itself against a librar
 disks — `fsck.js` for a single image, and the rest for the operations that resize or reorder
 files. `README.md` lists them.
 
+And if you want to know what any of it means on the disk itself,
+[S950-Disk-Format.pdf](S950-Disk-Format.pdf) is the format written up: the container, the
+MFM encoding, the directory and allocation table, the sample and program records, and the
+arena they share.
+
 ## The honest disclaimer
 
 This is an independent tool with no connection to Akai, offered as-is and with no warranty.
