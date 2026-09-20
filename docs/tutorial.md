@@ -126,6 +126,15 @@ line is the important part: it costs directory slots, disk blocks *and* sampler 
 it tells you what each will cost before you commit — the sampler's memory being the one
 thing the disk cannot tell you about, so say which machine you have.
 
+### Trimming the silence off
+
+**Trim silence** removes it from both ends and moves the markers with the audio. Silence is
+anything below about −48 dB, so a tail that fades into noise is kept — that is audio, not
+silence.
+
+If the sample loops, the cut stops at the loop end rather than reaching into the loop, and
+the confirmation tells you when that happened.
+
 ## 7. Add your own sample
 
 **Add sample** reads any audio file your browser can decode — WAV, MP3, FLAC, AAC, Ogg — and

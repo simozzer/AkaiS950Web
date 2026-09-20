@@ -1007,7 +1007,8 @@ var Akai = (function () {
    * is where a loop lives, and where a decay fades below any threshold worth picking.
    */
   Disk.prototype.planTrim = function (e, threshold) {
-    var plan = { front: 0, newWords: 0, blocksFreed: 0, seconds: 0, anything: false };
+    var plan = { front: 0, back: 0, newWords: 0, blocksFreed: 0,
+                 seconds: 0, backSeconds: 0, heldByLoop: false, anything: false };
     if (!e || e.type !== 'S') return plan;
 
     var w = this.sampleWords12(e);
@@ -1017,24 +1018,49 @@ var Akai = (function () {
     while (first < w.length && Math.abs(w[first]) <= threshold) first++;
     if (first >= w.length) return plan;                 // silent throughout
 
-    if (((w.length - first) & 1) !== 0) first--;        // keep the count even
-    if (first <= 0) return plan;
+    var last = w.length - 1;
+    while (last > first && Math.abs(w[last]) <= threshold) last--;
+    var keepTo = last + 1;                              // one past the last audible word
+
+    // The tail is where a loop lives. Cutting into one would leave the sampler looping
+    // over audio that is no longer there, so the cut stops at the loop end and says so.
+    if (e.loopMode !== 'O' && e.loopEnd > 0 && e.loopEnd <= w.length && keepTo < e.loopEnd) {
+      keepTo = e.loopEnd;
+      plan.heldByLoop = true;
+    }
+
+    // A sample is whole word pairs, so one end has to give. Where the loop is what
+    // stopped the cut, give at the front - going one word past the loop end would
+    // keep exactly the silence this was asked to remove.
+    if (((keepTo - first) & 1) !== 0) {
+      if (plan.heldByLoop && first > 0) first--;
+      else if (keepTo < w.length) keepTo++;
+      else first--;
+    }
+    if (first < 0) first = 0;
+    if (keepTo > w.length) keepTo = w.length;
+    if (first <= 0 && keepTo >= w.length) return plan;
 
     plan.front = first;
-    plan.newWords = w.length - first;
+    plan.back = w.length - keepTo;
+    plan.newWords = keepTo - first;
     plan.blocksFreed = blocksFor(e.length) - blocksFor(HEADER + plan.newWords * 3 / 2);
     plan.seconds = e.sampleRate > 0 ? first / e.sampleRate : 0;
+    plan.backSeconds = e.sampleRate > 0 ? plan.back / e.sampleRate : 0;
     plan.anything = true;
     return plan;
   };
 
-  /** Removes the leading silence. Markers move with the audio. */
+  /**
+   * Removes the silence at both ends. Markers move with the audio, and a loop is never
+   * cut into: see planTrim, which stops the tail at the loop end.
+   */
   Disk.prototype.trimSample = function (e, threshold) {
     var plan = this.planTrim(e, threshold);
-    if (!plan.anything) throw new Error('There is no leading silence to trim.');
+    if (!plan.anything) throw new Error('There is no silence at either end to trim.');
 
     var w = this.sampleWords12(e);
-    var kept = w.subarray(plan.front);
+    var kept = w.subarray(plan.front, w.length - plan.back);
     var n = plan.newWords;
 
     var shift = function (m) { var v = m - plan.front; return v < 0 ? 0 : Math.min(v, n); };
@@ -2001,7 +2027,7 @@ var Akai = (function () {
 
 // Shown in the page header. Bump it with any change to the write path, so a browser
 // running a cached copy is obvious at a glance rather than after a ruined disk.
-Akai.BUILD = '2026-09-20e';
+Akai.BUILD = '2026-09-20f';
 
 if (typeof module !== 'undefined' && module.exports) module.exports = Akai;
 

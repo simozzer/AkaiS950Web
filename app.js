@@ -1753,18 +1753,29 @@
     var plan = d.planTrim(e, AkaiAudio.SILENCE_THRESHOLD);
 
     if (!plan.anything) {
-      say(e.name + ' starts straight away - no leading silence to remove.');
+      say(e.name + ' has no silence at either end to remove.');
       return;
     }
-    if (!confirm(e.name + '\n\nSilence  ' + fmt(plan.front) + ' words (' +
-                 plan.seconds.toFixed(3) + ' s)\nWords    ' + fmt(e.sampleCount) + '  ->  ' +
-                 fmt(plan.newWords) + '\nFrees    ' + plan.blocksFreed + ' block(s)\n\n' +
-                 'Only the start is trimmed; markers move with the audio.')) return;
+
+    var what = [];
+    if (plan.front) what.push(fmt(plan.front) + ' words (' + plan.seconds.toFixed(3) +
+                             ' s) from the start');
+    if (plan.back) what.push(fmt(plan.back) + ' words (' + plan.backSeconds.toFixed(3) +
+                            ' s) from the end');
+
+    if (!confirm(e.name + '\n\nRemoves  ' + what.join('\n         ') +
+                 '\nWords    ' + fmt(e.sampleCount) + '  ->  ' + fmt(plan.newWords) +
+                 '\nFrees    ' + plan.blocksFreed + ' block(s)\n\n' +
+                 (plan.heldByLoop
+                   ? 'The end is cut back to the loop end and no further, so the loop ' +
+                     'still has its audio.\n'
+                   : '') +
+                 'Markers move with the audio.')) return;
 
     try {
       pushUndo(d, 'trim ' + e.name);
       var freed = d.trimSample(e, AkaiAudio.SILENCE_THRESHOLD);
-      reselect(d, e.slot, 'Trimmed ' + fmt(plan.front) + ' words from ' + e.name +
+      reselect(d, e.slot, 'Trimmed ' + what.join(' and ') + ' of ' + e.name +
                '  -  ' + freed + ' blocks freed.  Unsaved changes.');
     } catch (err) { say('Could not trim: ' + err.message); }
   }

@@ -84,7 +84,7 @@ under the envelopes it modulates. **Both zones and the flags** make the third co
 - Slices a break into one-shots on detected onsets, mapping them to consecutive keys
 - **New image** starts an empty 800K disk, to fill and download
 - Creates and deletes programs, adds and removes keygroups, renames and deletes samples
-- Stretches a sample to a new tempo, halves its rate, trims leading silence
+- Stretches a sample to a new tempo, halves its rate, trims the silence off both ends
 - Finds a loop in a sustained sample, and says how clean the join is
 - Rebuilds and downloads the image as `.hfe` or as a raw `.img`, for FlashFloppy
 
@@ -208,6 +208,7 @@ Everything that checks the app, or was used to work the format out, lives beside
 | `slicetest.js` | slices a break on every image with room for it |
 | `imgtest.js` | converts every image to raw `.img` and checks nothing is lost |
 | `looptest.js` | the loop finder, against the loops the library shipped with |
+| `trimtest.js` | trimming both ends, and that a loop is never cut into |
 | `newdisk.js` | builds a disk from nothing, fills it and writes it both ways — the one test that needs no images |
 | `vcftest.js` | measures the VCF — flat passband, −3 dB at cutoff, 36 dB/octave — and checks the calibrator recovers a mapping it is not given |
 | `keycaltest.js` | checks the key-tracking calibrator recovers a fraction it is not told |
@@ -376,8 +377,22 @@ Characters a filename cannot hold are replaced, and leaving the box empty keeps 
 name.
 
 **Sample operations**, on the waveform pane: **Trim silence**, **Halve rate**, **Fit to tempo**
-(WSOLA time stretch, pitch preserved), and **Rename** on the file heading — which retargets
-every keygroup zone that named the sample.
+(WSOLA time stretch, pitch preserved), **Find loop**, and **Rename** on the file heading —
+which retargets every keygroup zone that named the sample.
+
+### Trimming silence
+
+It takes the silence off **both ends**, and moves the markers with the audio. Silence means
+below 8 of the 12-bit range — about −48 dB — so a tail that fades into noise rather than to
+nothing is left alone, on the grounds that a fade is audio and the tool should not guess
+otherwise.
+
+The end is the delicate one, because the tail of a sample is where a loop lives. A cut that
+reached into a loop would leave the sampler looping over audio that is no longer there, so
+the cut **stops at the loop end** and the confirmation says when it did. `test/trimtest.js`
+checks that on made-up samples where the answer is known, and then on every looped sample in
+the library: 60 of the 324 have silence to trim, 7 of those have the cut held back by their
+loop, and none is ever cut into.
 
 **Programs** get their own panel: MIDI program, key to loudness, positional crossfade, and
 rename.
