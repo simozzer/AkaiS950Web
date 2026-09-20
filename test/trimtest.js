@@ -80,35 +80,156 @@ check('  the loop still fits inside the sample',
       'end ' + t2.loopEnd + ', length ' + t2.loopLength + ', words ' + t2.sampleCount);
 
 /* --- and across the library --------------------------------------------------- */
+//
+// A trim shortens a file, which moves things that other things point at. Samples sit
+// back to back in the sampler's RAM in directory order, and their loop descriptors sit
+// in one table the same way, so shortening one moves every sample after it. What must
+// NOT move is the zone pointers: those are a sample's position in directory order, and
+// trimming changes no order at all. This trims for real and checks both.
 
 var dir = process.argv[2] || 'C:\\Users\\simon\\AkaiS950Images';
+
+function ramSize(words) { return Math.floor((2 * words + 15) / 16) * 16; }
+function loopRecords(words, mode) {
+  var pages = Math.floor(2 * words / 131072);
+  return mode === 'L' ? 3 + pages : mode === 'A' ? 3 * (1 + pages) : 2 + pages;
+}
+
+/** Everything a keygroup zone says about where its sample lives. */
+function zonesOf(disk) {
+  var out = [];
+  disk.entries.forEach(function (e) {
+    if (e.type !== 'P') return;
+    disk.keygroups(e).forEach(function (kg, k) {
+      [kg.zone1, kg.zone2].forEach(function (z, zi) {
+        out.push({ prog: e.name, kg: k, zone: zi, name: z.name, ptr: z.pointer, inUse: z.inUse });
+      });
+    });
+  });
+  return out;
+}
+
+/**
+ * Everything about this disk that is not as the format says it should be.
+ *
+ * Returned as a list rather than a verdict, because nine of the library's own disks
+ * already have a loop descriptor pointer that does not follow the one before it - see
+ * fsck, which reports them as worth knowing rather than as damage. A test that asked
+ * "is this disk perfect?" after an edit would blame the edit for them. The question is
+ * "did the edit break anything that was not already broken", so the caller takes this
+ * before and after and compares.
+ */
+function problemsOf(disk) {
+  var samples = disk.entries.filter(function (e) { return e.type === 'S'; })
+                            .sort(function (a, b) { return a.slot - b.slot; });
+  var bad = [];
+
+  for (var i = 1; i < samples.length; i++) {
+    var prev = samples[i - 1];
+    if (samples[i].memoryAddress !== prev.memoryAddress + ramSize(prev.sampleCount))
+      bad.push('RAM address of ' + samples[i].name.trim() + ' does not follow ' + prev.name.trim());
+    var wantPtr = prev.loopDescriptorPtr + 10 * loopRecords(prev.sampleCount, prev.loopMode);
+    if (samples[i].loopDescriptorPtr !== wantPtr)
+      bad.push('loop descriptor of ' + samples[i].name.trim() + ' does not follow ' + prev.name.trim());
+  }
+
+  // the directory keeps its shape: same slots, no holes opened
+  var slots = disk.entries.map(function (e) { return e.slot; }).sort(function (a, b) { return a - b; });
+  slots.forEach(function (slot, i) { if (slot !== i) bad.push('directory has a hole at ' + i); });
+
+  // every zone points where the directory order says its sample now sits
+  zonesOf(disk).forEach(function (z) {
+    if (!z.inUse) return;
+    var want = disk.sampleTableAddress() + 70 * disk.sampleIndex(z.name);
+    if (z.ptr !== want)
+      bad.push('zone pointer for ' + z.name.trim() + ' is 0x' + z.ptr.toString(16) +
+               ', the directory order says 0x' + want.toString(16));
+  });
+
+  // and every file still reads back at the length its entry claims
+  disk.entries.forEach(function (e) {
+    if (!e.chainOk) bad.push(e.name.trim() + ': chain too short');
+    if (disk.readFile(e).length !== e.length) bad.push(e.name.trim() + ': short read');
+  });
+
+  return bad;
+}
+
+/** What is wrong now that was not wrong before. */
+function newProblems(before, after) {
+  var seen = {};
+  before.forEach(function (b) { seen[b] = (seen[b] || 0) + 1; });
+  return after.filter(function (a) {
+    if (seen[a]) { seen[a]--; return false; }
+    return true;
+  });
+}
+
+/** The zone names, which a trim must not touch at all. */
+function namesOf(disk) {
+  return zonesOf(disk).map(function (z) { return z.name; }).join('|');
+}
+
 if (fs.existsSync(dir)) {
-  var looked = 0, wouldTrim = 0, broke = 0, held = 0;
+  var disks = 0, trimmed = 0, held = 0, moved = 0, clean = 0, wereOdd = 0;
 
   fs.readdirSync(dir).filter(function (f) { return /\.hfe$/i.test(f); }).forEach(function (f) {
     var disk;
     try { disk = Akai.load(f, new Uint8Array(fs.readFileSync(path.join(dir, f)))); }
     catch (err) { return; }
+    disks++;
 
-    disk.entries.filter(function (x) { return x.type === 'S' && x.loopMode !== 'O'; })
-      .forEach(function (s) {
-        looked++;
-        var p = disk.planTrim(s, THRESHOLD);
-        if (!p.anything) return;
-        wouldTrim++;
-        if (p.heldByLoop) held++;
+    // the first sample with anything to trim that is not last in the directory - the
+    // point is to disturb the samples that come after it
+    var samples = disk.entries.filter(function (e) { return e.type === 'S'; })
+                              .sort(function (a, b) { return a.slot - b.slot; });
+    var pick = null;
+    for (var i = 0; i < samples.length - 1 && !pick; i++)
+      if (disk.planTrim(samples[i], THRESHOLD).anything) pick = samples[i];
+    if (!pick) return;
 
-        // what survives has to still contain the whole loop
-        var keptTo = s.sampleCount - p.back;
-        var newEnd = s.loopEnd >= s.sampleCount ? p.newWords
-                                                : Math.min(s.loopEnd - p.front, p.newWords);
-        if (keptTo < s.loopEnd || newEnd - Math.min(s.loopLength, p.newWords) < 0) broke++;
-      });
+    var before = problemsOf(disk);
+    var namesBefore = namesOf(disk);
+    if (before.length) wereOdd++;
+
+    var plan = disk.planTrim(pick, THRESHOLD);
+    var following = samples.filter(function (s2) { return s2.slot > pick.slot; });
+    var ramBefore = following.length ? following[0].memoryAddress : 0;
+
+    try { disk.trimSample(pick, THRESHOLD); }
+    catch (err) { console.log('  FAIL ' + f + ': ' + err.message); fails++; return; }
+
+    trimmed++;
+    if (plan.heldByLoop) held++;
+
+    var nowFirst = disk.entries.filter(function (e) {
+      return e.type === 'S' && e.slot > pick.slot;
+    }).sort(function (a, b) { return a.slot - b.slot; })[0];
+    if (nowFirst && nowFirst.memoryAddress !== ramBefore) moved++;
+
+    var broke = newProblems(before, problemsOf(disk));
+    var renamed = namesOf(disk) !== namesBefore;
+
+    // and it all has to survive being written out and read back
+    var again = Akai.load(f, disk.save());
+    var brokeToo = newProblems(before, problemsOf(again));
+
+    if (!broke.length && !brokeToo.length && !renamed) { clean++; return; }
+
+    console.log('  FAIL ' + f + ' after trimming ' + pick.name.trim());
+    if (renamed) console.log('         a zone name changed');
+    broke.concat(brokeToo).slice(0, 3).forEach(function (b) {
+      console.log('         ' + b);
+    });
+    fails++;
   });
 
-  console.log('\n  the library: ' + looked + ' looped samples, ' + wouldTrim +
-              ' with silence to trim, ' + held + ' where the loop held the cut');
-  check('no loop is ever cut into', broke === 0, broke + ' would have been');
+  console.log('\n  trimmed a sample on ' + trimmed + ' of ' + disks + ' disks:');
+  console.log('    ' + held + ' had the cut held back by a loop');
+  console.log('    ' + moved + ' moved the samples that came after them in RAM');
+  console.log('    ' + wereOdd + ' had a descriptor pointer the library itself left odd');
+  check('no disk was left worse than it started, saved and reloaded', clean === trimmed,
+        clean + ' of ' + trimmed);
 } else {
   console.log('\n  (no disk library at ' + dir + ' - skipped the corpus pass)');
 }
