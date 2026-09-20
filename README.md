@@ -1,10 +1,21 @@
 # Akai S950 Studio — web version
 
-A browser port of the WinForms tool in `..\AkaiS950Studio`. Reads Gotek/HxC `.hfe` images
-and raw 800K sector images of Akai S900/S950 floppies: the MFM bitstream, the directory and
-allocation table, sample headers, programs and keygroups.
+A browser tool for Akai S900/S950 floppy images. Reads Gotek/HxC `.hfe` and raw 800K `.img`
+sector images: the MFM bitstream, the directory and allocation table, sample headers,
+programs and keygroups. Browse a disk, hear it, edit it, and write a new image you can copy
+straight back to your USB stick.
 
-Everything runs in the page. Nothing is uploaded anywhere.
+Plain HTML and JavaScript — no build step, no dependencies, and it runs from a `file://`
+page. Everything happens in the browser; nothing is uploaded anywhere.
+
+![A program open, on its first keygroup](docs/images/overview.png)
+
+The keyboard across the top shows every keygroup's range and plays any key at its own
+pitch. The numbers down the left are the keygroups; everything about the selected one is in
+the editor beside them, and the waveform is docked along the bottom.
+
+**New here? [Start with the tutorial](docs/tutorial.md)** — open a disk, change something,
+and write it back.
 
 ## Running it
 
@@ -80,6 +91,22 @@ The drum set and overall-settings files are kept on the disk but not shown. Noth
 either is decoded: the four disks whose drum set is marked in use carry one factory
 default, byte for byte identical on a disk with five samples and one with twenty-six, so
 there is nothing to display but undecoded hex.
+
+## Some of it in use
+
+| | |
+|---|---|
+| **Several keygroups at once.** Ctrl and shift pick them; every control then writes to all of them, under one undo. | ![](docs/images/multi-select.png) |
+| **A key range, by pointing at it.** Click the low key, then the high one. The same key twice gives a one-key group. | ![](docs/images/key-range.png) |
+
+| | |
+|---|---|
+| ![](docs/images/find-loop.png) | ![](docs/images/slice.png) |
+| **Finding a loop.** It reports how clean the join is and says what to expect of it. The loop end is a choice — a held note has a release after its loop. | **Slicing a break.** Cut points move with the sensitivity, and the cost in slots, blocks and sampler memory is shown before you commit. |
+
+The screenshots are generated, not posed: `node docs/shots.js` drives a real browser over
+the DevTools protocol and writes `docs/images`, so they can be taken again whenever the
+interface moves.
 
 ## Checking it against the original
 
