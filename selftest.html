@@ -1,0 +1,762 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>selftest: starting</title>
+<style>body{font:13px Consolas,monospace;padding:12px} iframe{width:1200px;height:760px;border:1px solid #ccc}</style>
+</head>
+<body>
+<pre id="log">running...</pre>
+<iframe id="app" src="index.html"></iframe>
+
+<script>
+/*
+ * Drives the real UI the way a user would: drops a disk image on it, clicks
+ * through the tree, and checks that the panes actually filled in. Run it with
+ *   node serve.js
+ * then load http://localhost:8080/selftest.html?disk=test.hfe
+ */
+(function () {
+  var lines = [];
+  function log(s) { lines.push(s); document.getElementById('log').textContent = lines.join('\n'); }
+  function done(ok) {
+    document.title = 'selftest: ' + (ok ? 'PASS' : 'FAIL');
+    log(ok ? 'RESULT PASS' : 'RESULT FAIL');
+  }
+
+  var url = (location.search.match(/disk=([^&]+)/) || [])[1] || 'test.hfe';
+  var frame = document.getElementById('app');
+  var failures = 0;
+
+  function check(name, cond, detail) {
+    log((cond ? '  ok   ' : '  FAIL ') + name + (detail ? '   ' + detail : ''));
+    if (!cond) failures++;
+  }
+
+  window.onerror = function (msg, src, line) {
+    log('ERROR ' + msg + '  (' + (src || '').replace(/^.*\//, '') + ':' + line + ')');
+    done(false);
+  };
+
+  /**
+   * Waits for a canvas to become non-blank. A redraw deferred to the next frame
+   * is normal, and under a virtual clock frames do not arrive on demand, so this
+   * polls rather than looking once.
+   */
+  function waitDrawn(canvas, then) {
+    var tries = 0;
+    (function poll() {
+      if (pixelsDrawn(canvas) || ++tries > 30) { then(pixelsDrawn(canvas)); return; }
+      setTimeout(poll, 50);
+    })();
+  }
+
+  function pixelsDrawn(canvas) {
+    try {
+      var g = canvas.getContext('2d');
+      var d = g.getImageData(0, 0, canvas.width, canvas.height).data;
+      var first = null, varied = false;
+      for (var i = 0; i < d.length; i += 4 * 97) {
+        var key = d[i] + ',' + d[i + 1] + ',' + d[i + 2];
+        if (first === null) first = key;
+        else if (key !== first) { varied = true; break; }
+      }
+      return varied;
+    } catch (e) { return false; }
+  }
+
+  frame.onload = function () {
+    var win = frame.contentWindow, doc = frame.contentDocument;
+
+    /** The tree is nested <details>: find a group and take its first item. */
+    function firstIn(groupName) {
+      var all = doc.querySelectorAll('nav details');
+      for (var i = 0; i < all.length; i++) {
+        var sum = all[i].querySelector('summary');
+        if (sum && sum.classList.contains('group') &&
+            sum.textContent.trim().indexOf(groupName) === 0)
+          return all[i].querySelector('.item');
+      }
+      return null;
+    }
+
+    fetch(url).then(function (r) {
+      if (!r.ok) throw new Error(url + ': HTTP ' + r.status);
+      return r.arrayBuffer();
+    }).then(function (buf) {
+      log('fetched ' + url + '  (' + buf.byteLength.toLocaleString() + ' bytes)');
+
+      var file = new File([buf], url.replace(/^.*\//, ''), { type: 'application/octet-stream' });
+      var dt = new DataTransfer();
+      dt.items.add(file);
+      win.dispatchEvent(new DragEvent('drop', { dataTransfer: dt, bubbles: true, cancelable: true }));
+
+      // Wait for the decode to land rather than guessing how long it takes.
+      // Counted in polls, not milliseconds: under a virtual clock the timers run
+      // far ahead of the real file reading they are waiting on.
+      var tries = 0;
+      (function poll() {
+        if (doc.querySelectorAll('nav .item').length > 0) { afterDrop(); return; }
+        if (++tries > 4000) { log('ERROR timed out waiting for the decode'); done(false); return; }
+        setTimeout(poll, 25);
+      })();
+    }).catch(function (e) {
+      log('ERROR ' + e.message);
+      done(false);
+    });
+
+    function afterDrop() {
+      log('iframe markup: sampleOps=' + !!doc.getElementById('sampleOps') +
+          ' waveWrap=' + !!doc.getElementById('waveWrap') +
+          ' scripts=' + doc.querySelectorAll('script').length);
+
+      var status = doc.getElementById('status').textContent;
+      log('status: ' + status);
+      check('image decoded cleanly', /all sectors read cleanly/.test(status), status);
+
+      var disks = doc.querySelectorAll('nav .disk');
+      var items = doc.querySelectorAll('nav .item');
+      check('tree has one disk', disks.length === 1, disks.length + ' disk node(s)');
+      check('tree lists files', items.length > 0, items.length + ' file node(s)');
+      check('save enabled', doc.getElementById('save').disabled === false);
+
+      // find a program and a sample in the tree
+      var groups = doc.querySelectorAll('nav .group');
+      var names = [];
+      for (var i = 0; i < groups.length; i++) names.push(groups[i].textContent.trim());
+      log('groups: ' + names.join(' | '));
+
+      var program = firstIn('Programs'), sample = firstIn('Samples');
+      check('found a program in the tree', !!program, program && program.textContent);
+      check('found a sample in the tree', !!sample, sample && sample.textContent);
+
+      // a program must offer rename and its own properties
+      if (program) {
+        program.click();
+        check('program properties shown', doc.getElementById('progWrap').hidden === false);
+        check('program rename offered', doc.getElementById('fileOps').hidden === false);
+        check('program fields built',
+              doc.getElementById('progParams').querySelectorAll('input').length >= 3,
+              doc.getElementById('progParams').querySelectorAll('input').length + ' inputs');
+
+        // the whole thing must sit on one line under the toolbar
+        var bar = doc.getElementById('infoBar').getBoundingClientRect();
+        var head = doc.querySelector('header').getBoundingClientRect();
+        check('info bar is under the toolbar', Math.abs(bar.top - head.bottom) < 2,
+              'bar top ' + Math.round(bar.top) + ', toolbar ends ' + Math.round(head.bottom));
+        check('info bar is a single line', bar.height <= 44, Math.round(bar.height) + 'px tall');
+        check('program detail table is empty',
+              doc.getElementById('fields').rows.length === 0,
+              doc.getElementById('fields').rows.length + ' rows');
+        check('facts shown beside the fields',
+              doc.getElementById('fileFacts').textContent.indexOf('keygroups') >= 0,
+              doc.getElementById('fileFacts').textContent);
+      }
+
+      if (!program || !sample) { done(false); return; }
+
+      // --- a sample: fields, waveform, playback wiring
+      sample.click();
+      setTimeout(function () {
+        // a sample says everything on the strip too, and its header is editable there
+        check('sample strip shown', doc.getElementById('smpWrap').hidden === false);
+        check('sample fields editable',
+              doc.getElementById('smpParams').querySelectorAll('input,select').length >= 5,
+              doc.getElementById('smpParams').querySelectorAll('input,select').length + ' controls');
+        check('sample detail table is empty', doc.getElementById('fields').rows.length === 0);
+        check('sample facts shown',
+              doc.getElementById('fileFacts').textContent.indexOf('words') >= 0,
+              doc.getElementById('fileFacts').textContent);
+        check('strip still one line',
+              doc.getElementById('infoBar').getBoundingClientRect().height <= 44,
+              Math.round(doc.getElementById('infoBar').getBoundingClientRect().height) + 'px');
+
+        // editing the pitch must reach the disk
+        var pitch = doc.getElementById('smpParams').querySelector('input[type=number]');
+        var was = pitch.value;
+        pitch.value = parseInt(was, 10) + 1;
+        pitch.dispatchEvent(new Event('change'));
+        var now = doc.getElementById('smpParams').querySelector('input[type=number]').value;
+        check('pitch edit reached the disk', now !== was, was + ' -> ' + now);
+
+        // ...and must survive leaving the sample and coming back. Every edit reparses
+        // the directory into fresh entry objects, so a tree click handler holding the
+        // old object redrew the panel from the pre-edit header - the disk was right and
+        // the display was a ghost. Checking the value straight after the edit misses it.
+        program.click();
+        sample.click();
+        var back = doc.getElementById('smpParams').querySelector('input[type=number]').value;
+        check('pitch survives navigating away and back', back === now, now + ' -> ' + back);
+
+        check('waveform shown', doc.getElementById('waveWrap').hidden === false);
+        waitDrawn(doc.getElementById('wave'), function (ok) {
+        check('waveform drew pixels', ok);
+
+        // --- a program: keygroups and the keyboard
+        program.click();
+        setTimeout(function () {
+          var kg = doc.getElementById('keygroups');
+          check('keygroup pane shown', doc.getElementById('kgWrap').hidden === false);
+          // the keyboard is what sits under the info strip now; a stray margin above it
+          // costs the editor a row of parameters on a laptop
+          var top = doc.getElementById('piano').getBoundingClientRect();
+          var strip = doc.getElementById('infoBar').getBoundingClientRect();
+          check('the keyboard sits close under the info strip',
+                top.top - strip.bottom < 24,
+                Math.round(top.top - strip.bottom) + 'px below it');
+          var kgh = doc.querySelector('#kgList h3').getBoundingClientRect();
+          var edh = doc.querySelector('#kgEdit h3').getBoundingClientRect();
+          check('the keygroups heading names the list, level with the editor heading',
+                kgh.top > top.bottom && Math.abs(kgh.top - edh.top) < 4,
+                'list heading ' + Math.round(kgh.top) + ', editor heading ' + Math.round(edh.top));
+          check('keygroup rows listed', kg.tBodies.length > 0 && kg.tBodies[0].rows.length > 0,
+                (kg.tBodies[0] ? kg.tBodies[0].rows.length : 0) + ' rows');
+          check('keyboard drew pixels', pixelsDrawn(doc.getElementById('piano')));
+
+          // clicking a keygroup row selects it and shows its sample
+          if (kg.tBodies[0] && kg.tBodies[0].rows.length) {
+            kg.tBodies[0].rows[0].click();
+            setTimeout(function () {
+              check('keygroup row selects', kg.tBodies[0].rows[0].classList.contains('sel'));
+              check('keygroup shows its waveform', doc.getElementById('waveWrap').hidden === false,
+                    doc.getElementById('waveTitle').textContent);
+              check('keygroup list is visible', kg.getBoundingClientRect().height > 0,
+                    Math.round(kg.getBoundingClientRect().height) + 'px tall');
+              editorChecks(kg);
+            }, 250);
+          } else stableSize();
+        }, 400);
+        });
+      }, 400);
+    }
+
+    /**
+     * The parameter fields, in the order the three grids lay them out. The editor is
+     * rebuilt from the image after every edit, so a field is re-found by position.
+     */
+    var paramIndex = 0;
+    function numFields() {
+      return doc.querySelectorAll('#paramsTop input[type=range], ' +
+                                  '#paramsLfo input[type=range], #params input[type=range]');
+    }
+    function paramVal() {
+      var f = numFields()[paramIndex];
+      return f ? f.value : null;
+    }
+
+    /** The keygroup editor: parameter fields, both envelopes, add and delete. */
+    function editorChecks(kg) {
+      check('keygroup editor shown', doc.getElementById('kgEdit').hidden === false);
+
+      var params = doc.getElementById('params');
+      var near = doc.getElementById('paramsTop');
+      var inputs = doc.querySelectorAll('#paramsTop input, #paramsLfo input, #params input');
+      check('parameter fields built', inputs.length >= 15, inputs.length + ' inputs');
+      var lfo = doc.getElementById('paramsLfo');
+      check('key range and velocity sit under the envelopes',
+            !!near && near.querySelectorAll('input').length >= 6 &&
+            near.getBoundingClientRect().top > doc.getElementById('vcf').getBoundingClientRect().top,
+            near ? near.querySelectorAll('input').length + ' fields below the VCF' : 'missing');
+      check('the LFO is beside them, not below',
+            !!lfo && lfo.getBoundingClientRect().left > near.getBoundingClientRect().right - 1 &&
+            Math.abs(lfo.getBoundingClientRect().top - near.getBoundingClientRect().top) < 4,
+            lfo ? 'left ' + Math.round(lfo.getBoundingClientRect().left) + ', top ' +
+                  Math.round(lfo.getBoundingClientRect().top) : 'missing');
+      check('the zones and flags make a third column',
+            params.getBoundingClientRect().left > lfo.getBoundingClientRect().right - 1,
+            Math.round(lfo.getBoundingClientRect().right) + ' | ' +
+            Math.round(params.getBoundingClientRect().left));
+      check('VCA envelope drew', pixelsDrawn(doc.getElementById('vca')));
+      check('VCF envelope drew', pixelsDrawn(doc.getElementById('vcf')));
+
+      // Editing a parameter must reach the disk and come back: the editor is rebuilt
+      // from the image after every edit, so re-reading the field is a round trip. The
+      // field has to have room to go up - a value already at its maximum is clamped
+      // straight back and proves nothing.
+      var nums = numFields(), first = null;
+      for (var n = 0; n < nums.length; n++) {
+        if (parseInt(nums[n].value, 10) < parseInt(nums[n].max, 10)) {
+          first = nums[n]; paramIndex = n; break;
+        }
+      }
+      check('a parameter field with room to edit', !!first,
+            first ? first.title + ' = ' + first.value : 'none');
+      if (!first) { treeChecks(); return; }
+      var before = first.value;
+      first.value = parseInt(first.value, 10) + 1;
+      // a slider writes as it moves and rebuilds the editor when it is let go
+      first.dispatchEvent(new Event('input'));
+      first.dispatchEvent(new Event('change'));
+
+      setTimeout(function () {
+        var after = paramVal();
+        check('editing a parameter reaches the disk', after !== before, before + ' -> ' + after);
+
+        // add and delete a keygroup
+        var n0 = doc.getElementById('keygroups').tBodies[0].rows.length;
+        doc.getElementById('kgAdd').click();
+
+        setTimeout(function () {
+          var n1 = doc.getElementById('keygroups').tBodies[0].rows.length;
+          check('add keygroup', n1 === n0 + 1, n0 + ' -> ' + n1);
+
+          doc.getElementById('kgDel').click();
+          setTimeout(function () {
+            var n2 = doc.getElementById('keygroups').tBodies[0].rows.length;
+            check('delete keygroup', n2 === n0, n1 + ' -> ' + n2);
+            undoChecks(n0, before);
+          }, 350);
+        }, 350);
+      }, 350);
+    }
+
+    /**
+     * Undo must put back whatever an edit changed - including the ones that
+     * resize a file - and redo must put it back again.
+     */
+    function undoChecks(rowsBefore, keysBefore) {
+      var undo = doc.getElementById('undo'), redo = doc.getElementById('redo');
+      var rows = function () { return doc.getElementById('keygroups').tBodies[0].rows.length; };
+      var keys = paramVal;
+
+      check('undo is offered', undo.disabled === false, undo.title);
+
+      // the last edit was the delete; undoing it brings the keygroup back
+      undo.click();
+      setTimeout(function () {
+        check('undo restores a deleted keygroup', rows() === rowsBefore + 1,
+              rowsBefore + ' -> ' + rows());
+
+        undo.click();       // undo the add
+        setTimeout(function () {
+          check('undo again removes the added one', rows() === rowsBefore,
+                rows() + ' rows');
+
+          undo.click();     // undo the parameter edit
+          setTimeout(function () {
+            check('undo restores an edited parameter', keys() === keysBefore,
+                  keysBefore + ' <- ' + keys());
+            check('redo is offered', redo.disabled === false, redo.title);
+
+            redo.click();
+            setTimeout(function () {
+              check('redo reapplies it', keys() !== keysBefore, keys());
+              rangeChecks();
+            }, 250);
+          }, 250);
+        }, 250);
+      }, 250);
+    }
+
+    /**
+     * Setting the key range from the keyboard: the button arms it, the next two clicks
+     * on the keys are the low and the high, and one undo puts both back.
+     */
+    function rangeChecks() {
+      doc.getElementById('keygroups').tBodies[0].rows[0].click();
+      var btn = doc.getElementById('kgSetRange');
+      check('set range from the keyboard offered', !!btn);
+      if (!btn) { treeChecks(); return; }
+
+      var piano = doc.getElementById('piano');
+      var keys = function () { return doc.getElementById('keygroups').tBodies[0].rows[0].title; };
+      var before = keys();
+
+      // a click on the white keys: below where the black ones end, above the labels
+      function clickKey(fx) {
+        var b = piano.getBoundingClientRect();
+        piano.dispatchEvent(new win.MouseEvent('mousedown', { bubbles: true,
+          clientX: b.left + b.width * fx, clientY: b.top + b.height * 0.78 }));
+      }
+
+      btn.click();
+      check('keyboard armed for the low key', /low key/i.test(btn.textContent), btn.textContent);
+
+      clickKey(0.30);
+      check('first click takes the low key', /high key/i.test(btn.textContent), btn.textContent);
+
+      clickKey(0.55);
+      setTimeout(function () {
+        var written = keys();
+        var again = doc.getElementById('kgSetRange');
+        check('second click writes the range', written !== before, before + ' -> ' + written);
+        check('the button disarms itself', /from keyboard/i.test(again.textContent),
+              again.textContent);
+        check('the range is one undo', /key range/.test(doc.getElementById('undo').title),
+              doc.getElementById('undo').title);
+
+        doc.getElementById('undo').click();
+        setTimeout(function () {
+          check('undo restores both keys at once', keys() === before,
+                written + ' -> ' + keys());
+          multiChecks();
+        }, 300);
+      }, 300);
+    }
+
+    /**
+     * Selecting several keygroups and moving one control has to reach all of them, and
+     * one undo has to put them all back. Ctrl adds, shift takes a run.
+     */
+    function multiChecks() {
+      var body = function () { return doc.getElementById('keygroups').tBodies[0]; };
+      if (body().rows.length < 4) { treeChecks(); return; }
+
+      function clickRow(n, mods) {
+        body().rows[n].dispatchEvent(new win.MouseEvent('click', Object.assign(
+          { bubbles: true, cancelable: true }, mods || {})));
+      }
+      function selected() { return doc.querySelectorAll('#keygroups tr.sel').length; }
+
+      // The witness is one parameter field, read out of the editor for a given keygroup.
+      // Reading it means selecting that keygroup, which is destructive to a selection -
+      // so the reads happen before the multiple selection is made, and after the edit.
+      var idx = 0;
+      var nums = numFields();
+      for (var n = 0; n < nums.length; n++) {
+        if (parseInt(nums[n].value, 10) < parseInt(nums[n].max, 10) - 1) { idx = n; break; }
+      }
+      function valueAt(r) {
+        clickRow(r);
+        return parseInt(numFields()[idx].value, 10);
+      }
+
+      var was = [valueAt(0), valueAt(1), valueAt(2), valueAt(3)];
+
+      clickRow(0);
+      check('a plain click selects one', selected() === 1, selected() + ' selected');
+
+      clickRow(2, { ctrlKey: true });
+      check('ctrl-click adds to the selection', selected() === 2, selected() + ' selected');
+
+      clickRow(2, { ctrlKey: true });
+      check('ctrl-click again takes it out', selected() === 1, selected() + ' selected');
+
+      // the anchor moved to the ctrl-clicked row, as it does in any file list, so the
+      // run is measured from a plain click
+      clickRow(0);
+      clickRow(3, { shiftKey: true });
+      check('shift-click takes the run', selected() === 4, selected() + ' selected');
+      check('the lead is marked apart',
+            doc.querySelectorAll('#keygroups tr.lead').length === 1,
+            doc.querySelectorAll('#keygroups tr.lead').length + ' lead');
+
+      var f = numFields()[idx];
+      var want = parseInt(f.value, 10) + 1;
+      var what = f.title;
+      f.value = want;
+      f.dispatchEvent(new Event('input'));
+      f.dispatchEvent(new Event('change'));
+
+      setTimeout(function () {
+        check('and it was one undo', /on 4 keygroups/.test(doc.getElementById('undo').title),
+              doc.getElementById('undo').title);
+
+        var now = [valueAt(0), valueAt(1), valueAt(2), valueAt(3)];
+        var took = now.filter(function (v) { return v === want; }).length;
+        check('the edit reached every selected keygroup', took === 4,
+              what + ': ' + was.join(',') + ' -> ' + now.join(',') + '  wanted ' + want);
+
+        doc.getElementById('undo').click();
+        setTimeout(function () {
+          var back = [valueAt(0), valueAt(1), valueAt(2), valueAt(3)];
+          var same = 0;
+          for (var r = 0; r < 4; r++) if (back[r] === was[r]) same++;
+          check('undo put them all back', same === 4, back.join(',') + ' of ' + was.join(','));
+          loopChecks();
+        }, 300);
+      }, 300);
+    }
+
+    /**
+     * Finding a loop: the dialog opens on the selected sample, reports a match, and
+     * setting it writes an end and a length the sampler can read back.
+     */
+    function loopChecks() {
+      var sample = firstIn('Samples');
+      if (!sample) { treeChecks(); return; }
+      sample.click();
+
+      setTimeout(function () {
+        doc.getElementById('opLoop').click();
+        var dlg = doc.getElementById('loopDlg');
+        check('the loop dialog opens', dlg.open === true);
+        if (!dlg.open) { treeChecks(); return; }
+
+        setTimeout(function () {
+          var text = doc.getElementById('lpSummary').textContent;
+          check('it reports a loop and a match', /match\s+[-0-9.]+/.test(text),
+                text.split(String.fromCharCode(10))[0]);
+          check('setting it is offered', doc.getElementById('lpGo').disabled === false);
+
+          doc.getElementById('lpGo').click();
+          setTimeout(function () {
+            check('the dialog closes', dlg.open === false);
+            var facts = doc.getElementById('status').textContent;
+            check('the sample is looped', /Looped/.test(facts), facts);
+
+            doc.getElementById('undo').click();
+            setTimeout(function () {
+              check('undo takes the loop back',
+                    /Undid loop on/.test(doc.getElementById('status').textContent),
+                    doc.getElementById('status').textContent);
+              treeChecks();
+            }, 300);
+          }, 400);
+        }, 400);
+      }, 300);
+    }
+
+    /** The tree must actually toggle. */
+    function treeChecks() {
+      var details = doc.querySelectorAll('nav details');
+      check('tree nodes are collapsible', details.length >= 2, details.length + ' <details>');
+
+      if (details.length) {
+        var d0 = details[0];
+        var wasOpen = d0.open;
+        d0.open = !wasOpen;
+        check('tree node toggles', d0.open !== wasOpen, wasOpen ? 'open -> closed' : 'closed -> open');
+        d0.open = wasOpen;
+      }
+      layoutChecks();
+    }
+
+    /** The app should fill the window, with the waveform docked at the bottom. */
+    function layoutChecks() {
+      // the waveform pane only exists once something has a waveform to show
+      firstIn('Samples').click();
+      setTimeout(measure, 300);
+    }
+
+    function measure() {
+      var h = win.innerHeight;
+      var main = doc.querySelector('main').getBoundingClientRect();
+      var wave = doc.getElementById('waveWrap').getBoundingClientRect();
+      var scroll = doc.getElementById('scroll');
+
+      check('app fills the window height', Math.abs(main.bottom - h) < 2,
+            'main bottom ' + Math.round(main.bottom) + ' of ' + h);
+      var bar = doc.querySelector('.playbar').getBoundingClientRect();
+      var cv = doc.getElementById('wave').getBoundingClientRect();
+      check('the transport stands beside the waveform',
+            bar.left > cv.right - 1 && bar.top < cv.bottom,
+            'wave ends ' + Math.round(cv.right) + ', controls at ' + Math.round(bar.left));
+      check('the transport stacks its controls',
+            doc.getElementById('stop').getBoundingClientRect().top >
+            doc.getElementById('play').getBoundingClientRect().bottom - 1,
+            'play ' + Math.round(doc.getElementById('play').getBoundingClientRect().bottom) +
+            ', stop ' + Math.round(doc.getElementById('stop').getBoundingClientRect().top));
+      check('waveform sits at the bottom', Math.abs(wave.bottom - h) < 2,
+            'wave bottom ' + Math.round(wave.bottom));
+      check('waveform is below the content', wave.top >= scroll.getBoundingClientRect().bottom - 2,
+            'wave top ' + Math.round(wave.top) + ', content ends ' +
+            Math.round(scroll.getBoundingClientRect().bottom));
+      check('the middle is what scrolls', scroll.scrollHeight >= scroll.clientHeight,
+            scroll.clientHeight + ' visible of ' + scroll.scrollHeight);
+      check('the page itself does not scroll',
+            doc.documentElement.scrollHeight <= doc.documentElement.clientHeight + 2);
+
+      saveNameChecks();
+    }
+
+    /**
+     * Downloading should ask for a name and put the right extension on it,
+     * whatever the user types. The prompt is stubbed and the status line, which
+     * reports the filename actually used, is read back.
+     */
+    /**
+     * The name a download gets, and the container it gets it for.
+     *
+     * These checks used to drive window.prompt, which is how saving once asked for a
+     * name. It has been a dialog with a name field and a format for a while, so they
+     * drove nothing and reported undefined for every case. They fill the dialog now.
+     *
+     * The anchor click is intercepted rather than allowed: the name the app puts on it
+     * is exactly what is being checked, and seven rebuilt images have no business
+     * landing in the downloads folder of whoever runs the tests.
+     */
+    function saveNameChecks() {
+      var cases = [
+        ['my kit', 'hfe', 'my kit.hfe', 'a plain name gains the extension'],
+        ['my kit.hfe', 'hfe', 'my kit.hfe', 'a typed .hfe is not doubled'],
+        ['my kit.img', 'hfe', 'my kit.hfe', 'the wrong extension is corrected'],
+        ['my kit', 'img', 'my kit.img', 'the other container gets its own extension'],
+        ['my kit.hfe', 'img', 'my kit.img', 'and corrects the typed one in turn'],
+        ['a/b:c*d', 'hfe', 'a-b-c-d.hfe', 'characters a filename cannot hold are replaced'],
+        ['   ', 'hfe', null, 'blank falls back to the suggested name']
+      ];
+
+      var wrote = null;
+      var realClick = win.HTMLAnchorElement.prototype.click;
+      win.HTMLAnchorElement.prototype.click = function () {
+        if (this.download) { wrote = this.download; return; }
+        return realClick.apply(this, arguments);
+      };
+
+      var i = 0;
+      (function next() {
+        if (i >= cases.length) {
+          win.HTMLAnchorElement.prototype.click = realClick;
+          sampleOps();
+          return;
+        }
+        var c = cases[i++];
+        wrote = null;
+
+        doc.getElementById('save').click();
+        var dlg = doc.getElementById('saveDlg');
+        if (!dlg.open) {
+          check(c[3], false, 'the save dialog did not open');
+          next();
+          return;
+        }
+
+        doc.getElementById('svName').value = c[0];
+        var radio = doc.getElementById(c[1] === 'img' ? 'svImg' : 'svHfe');
+        radio.checked = true;
+        radio.dispatchEvent(new Event('change'));
+        doc.getElementById('svGo').click();
+
+        // the image is rebuilt on a timer, so the name arrives a tick later
+        var waited = 0;
+        (function poll() {
+          if (wrote === null && ++waited < 200) { setTimeout(poll, 25); return; }
+          if (c[2] === null)
+            check(c[3], /-edited\.hfe$/.test(wrote || ''), String(wrote));
+          else
+            check(c[3], wrote === c[2],
+                  "typed '" + c[0] + "' as " + c[1] + " -> " + wrote);
+          next();
+        })();
+      })();
+    }
+
+    /** The sample operations: rename, trim, halve, stretch, and both zone pickers. */
+    function sampleOps() {
+      var sample = firstIn('Samples');
+      sample.click();
+
+      setTimeout(function () {
+        check('sample operations offered', doc.getElementById('sampleOps').hidden === false);
+        ['opRenameFile', 'opTrim', 'opHalve', 'opStretch', 'opLoop'].forEach(function (id) {
+          check('  ' + id + ' present', !!doc.getElementById(id));
+        });
+
+        // Playback: build the graph for real. Nothing is audible headless, but a
+        // broken buffer or a throw shows up here (window.onerror fails the run).
+        try {
+          doc.getElementById('play').click();
+          check('play built an audio graph', !!win.AudioContext || !!win.webkitAudioContext);
+          doc.getElementById('stop').click();
+          check('stop did not throw', true);
+        } catch (e) {
+          check('playback', false, e.message);
+        }
+
+        // rename, without a prompt: straight at the library
+        // exercise the library operations directly on a fresh copy
+        fetch(url).then(function (r) { return r.arrayBuffer(); }).then(function (buf) {
+          var dk = win.Akai.load('t.hfe', new Uint8Array(buf));
+          var s = dk.entries.filter(function (e) { return e.type === 'S'; })[0];
+          var p = dk.entries.filter(function (e) { return e.type === 'P'; })[0];
+
+          var words0 = s.sampleCount, free0 = dk.freeBlocks();
+
+          var refs = dk.renameFile(s, 'RENAMED');
+          var s2 = dk.entries.filter(function (e) { return e.slot === s.slot; })[0];
+          check('rename writes both places', s2.name === 'RENAMED', 'refs updated: ' + refs);
+
+          var plan = dk.planTrim(s2, 8);
+          check('planTrim runs', typeof plan.front === 'number',
+                plan.anything ? plan.front + ' words of silence' : 'nothing to trim');
+
+          // time stretch, then check the file grew and still reads back
+          var w = dk.sampleWords12(s2);
+          var longer = win.AkaiAudio.timeStretch(w, 1.25);
+          check('time stretch length', Math.abs(longer.length - (w.length * 1.25)) < 4,
+                w.length + ' -> ' + longer.length);
+
+          dk.replaceSampleAudio(s2, longer, s2.sampleRate);
+          var s3 = dk.entries.filter(function (e) { return e.slot === s.slot; })[0];
+          check('stretched sample written', s3.sampleCount === (longer.length & ~1),
+                words0 + ' -> ' + s3.sampleCount + ' words, free ' + free0 + ' -> ' + dk.freeBlocks());
+          check('length == 60 + 1.5N', s3.length === 60 + 1.5 * s3.sampleCount);
+
+          // varispeed leaves the audio alone
+          var len = s3.length;
+          dk.setSampleRate(s3, 20000);
+          var s4 = dk.entries.filter(function (e) { return e.slot === s.slot; })[0];
+          check('varispeed keeps the size', s4.length === len && s4.sampleRate === 20000);
+
+          // zone 2
+          var kg = dk.keygroups(p)[0];
+          var other = dk.entries.filter(function (e) { return e.type === 'S'; })[1];
+          if (other) {
+            dk.setZoneSample(p, 0, 1, other.name);
+            var kg2 = dk.keygroups(p)[0];
+            check('zone 2 sample set', kg2.zone2.name === other.name,
+                  kg2.zone2.name + ' ptr 0x' + kg2.zone2.pointer.toString(16));
+            check('zone 2 pointer derived', kg2.zone2.pointer !== 0);
+          }
+
+          check('zone 2 picker in the editor', doc.getElementById('params') !== null);
+          stableSize();
+        }).catch(function (e) { log('ERROR ' + e.message); done(false); });
+      }, 400);
+    }
+
+    /**
+     * Redraws repeatedly and checks the canvases stay the same size. Setting the
+     * backing store from the device pixel ratio and then reading it back as the
+     * layout size makes them grow a little every time, which only shows up after
+     * several redraws.
+     */
+    function stableSize() {
+      var piano = doc.getElementById('piano');
+      var wave = doc.getElementById('wave');
+      var h0 = piano.getBoundingClientRect().height;
+      var w0 = wave.getBoundingClientRect().height;
+
+      for (var i = 0; i < 6; i++) win.dispatchEvent(new Event('resize'));
+
+      setTimeout(function () {
+        var h1 = piano.getBoundingClientRect().height;
+        var w1 = wave.getBoundingClientRect().height;
+        check('keyboard height stable over redraws', Math.abs(h1 - h0) < 1, h0 + ' -> ' + h1);
+        check('waveform height stable over redraws', Math.abs(w1 - w0) < 1, w0 + ' -> ' + w1);
+        rebuildCheck();
+      }, 300);
+    }
+
+    function rebuildCheck() {
+      // the identity round-trip, in the browser this time
+      var d = win.Akai ? null : null;
+      try {
+        var appDisks = null;
+        // reach the disk through the page's own save path
+        var before = performance.now();
+        fetch(url).then(function (r) { return r.arrayBuffer(); }).then(function (buf) {
+          var orig = new Uint8Array(buf);
+          var disk = win.Akai.load('t.hfe', orig);
+          var again = disk.save();
+          var same = again.length === orig.length;
+          if (same) for (var i = 0; i < again.length; i++) if (again[i] !== orig[i]) { same = false; break; }
+          check('identity round-trip in the browser', same,
+                ((performance.now() - before) | 0) + ' ms');
+          done(failures === 0);
+        });
+      } catch (e) {
+        log('ERROR ' + e.message);
+        done(false);
+      }
+    }
+  };
+})();
+</script>
+</body>
+</html>
+
+
+
+

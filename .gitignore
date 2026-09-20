@@ -1,0 +1,28 @@
+# Built by makezip.ps1 from the files beside it - what the page's "Download source"
+# button serves. Derived from everything in this repo, so it does not belong in it.
+AkaiS950Web.zip
+
+# An 880 KB manifest of what the C# build makes of the disk library, for verify.js to
+# diff the JavaScript against. Rebuild it with make-expected.ps1 when you need it.
+expected.json
+
+# Calibration takes: recordings of the sampler and of this page playing the same run,
+# for benchcal.js to measure. Tens of megabytes each, and the numbers they settle are
+# already written down in README.md.
+*.wav
+*.mp3
+*.asd
+*-report.txt
+
+# The bench disk the self-test and the calibration run use. It is built by benchdisk.js
+# from an original library image and carries that disk's audio with it, so it is kept out
+# of a public repository:
+#
+#   node benchdisk.js build <an original .hfe> DSKA0000-bench.hfe
+#   node benchdisk.js check DSKA0000-bench.hfe
+#
+# Any disk image works for the browser self-test; name it in the query string:
+#   http://localhost:8080/selftest.html?disk=your-disk.hfe
+DSKA0000-bench.hfe
+
+node_modules/

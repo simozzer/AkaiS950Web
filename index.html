@@ -1,0 +1,449 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Akai S950 Studio</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<header>
+  <h1>Akai S950 Studio <span id="buildStamp" title="Loaded code version - if this is not the latest, reload with Ctrl+F5"></span></h1>
+  <div class="tools">
+    <label class="button">
+      Open images<input type="file" id="pick" accept=".hfe,.img" multiple hidden>
+    </label>
+    <label class="button" id="addSampleBtn">
+      Add sample<input type="file" id="audioPick" accept="audio/*" hidden>
+    </label>
+    <button id="newProgram" disabled title="Create an empty program on the selected disk">New program</button>
+    <button id="undo" disabled title="Nothing to undo">Undo</button>
+    <button id="redo" disabled title="Nothing to redo">Redo</button>
+    <button id="save" disabled>Download image</button>
+    <label class="midi" title="Play the selected program from any MIDI source. Needs the page
+ served over http or https - Web MIDI is refused on a file:// page.">
+      <select id="midiIn"><option value="">MIDI in: off</option></select>
+      <select id="midiCh" title="Which MIDI channel to listen on"></select>
+    </label>
+    <span id="status">Drop .hfe or .img files anywhere, or use Open.</span>
+    <!-- The source bundle, not a disk image — kept at the far right so it cannot be
+         mistaken for "Download image" above. -->
+    <a class="button" id="getSource" href="AkaiS950Web.zip" download
+       title="Download AkaiS950Web.zip — the app's source, to run locally">Download source</a>
+  </div>
+</header>
+
+<main>
+  <nav id="tree" aria-label="Disk contents">
+    <p class="empty">No disks loaded.</p>
+  </nav>
+
+  <section id="detail">
+    <!-- one horizontal strip: name, actions, the type's own fields, then facts -->
+    <div id="infoBar" hidden>
+      <span id="fileName"></span>
+      <span class="rowbuttons" id="fileOps" hidden>
+        <button id="opRenameFile">Rename</button>
+        <button id="opDelete" hidden>Delete</button>
+      </span>
+      <span id="progWrap" hidden><span id="progParams"></span></span>
+      <span id="smpWrap" hidden><span id="smpParams"></span></span>
+      <span id="fileFacts" class="muted"></span>
+    </div>
+
+    <div id="scroll">
+    <div id="intro">
+      <h2>Akai S900 / S950 disk tool</h2>
+      <p class="lede">
+        Opens Gotek/HxC <code>.hfe</code> images and raw 800K <code>.img</code> sector
+        images of Akai S900/S950 floppies, and lets you edit what is on them &mdash; then
+        writes a new image you can copy straight back to your USB stick, in either format.
+      </p>
+
+      <h3>What it does</h3>
+      <ul>
+        <li><b>Browse and listen.</b> Programs, samples and keygroups, with waveforms and
+          an on-screen keyboard that plays each sample at the pitch its keygroup gives it.</li>
+        <li><b>Add samples</b> from any audio file your browser can open. Converted to Akai
+          12-bit, with a choice of sample rate, normalising and silence trimming.</li>
+        <li><b>Slice a break</b> into one-shot samples and map them across consecutive keys
+          in one step &mdash; adjust the sensitivity and watch the cut points move.</li>
+        <li><b>Edit</b> key ranges &mdash; by clicking the low and high keys on the keyboard,
+          or by typing them &mdash; along with tuning, loop points, the VCA and VCF envelopes,
+          and which sample each zone plays.</li>
+        <li><b>Add and remove</b> programs, keygroups and samples. The tool keeps everything
+          the sampler relies on consistent as you go.</li>
+        <li><b>Rework audio</b> &mdash; stretch a sample to a new tempo without changing its
+          pitch, or halve its rate to free up memory.</li>
+      </ul>
+
+      <h3>HFE or IMG</h3>
+      <p>
+        <b>HFE</b> is the usual Gotek container and carries the disk geometry inside the
+        file. Both HxC and FlashFloppy firmware read it, so it is the safe default.
+      </p>
+      <p>
+        <b>IMG</b> is the bare sector image &mdash; 80 cylinders, 2 sides, 5 sectors of
+        1024 bytes, 819,200 bytes in all &mdash; which some FlashFloppy users prefer.
+        Nothing is lost converting an HFE to one: the sectors are identical, and it is the
+        same data the tool has been editing all along. Because a raw image carries no
+        geometry of its own, FlashFloppy may need that told to it; if a converted
+        <code>.img</code> will not mount, that is the first thing to check.
+      </p>
+      <p>
+        It converts both ways. An <code>.img</code> can be written back out as an
+        <code>.hfe</code>, with the whole container built from the sectors &mdash; and the
+        encoder reproduces all 101 of the original library disks <b>byte for byte</b>, so a
+        converted disk is not merely readable, it is the same file the Akai drive wrote.
+      </p>
+
+      <h3>Playing it from a MIDI source</h3>
+      <p>
+        Pick a MIDI input in the toolbar, select a program, and play it from anywhere that
+        sends MIDI &mdash; eight voices, with the keygroup under each note deciding the
+        sample, the tuning and the whole voice, filter and envelopes included. Useful for
+        hearing a program as an instrument rather than a list, and for sending the same
+        part here and to a real S950 to compare the two.
+      </p>
+      <p>
+        Browsers only grant MIDI access to a page served over http or https, so the control
+        is greyed out if you opened <code>index.html</code> straight from disk. Run
+        <code>node serve.js</code> and use the address it prints.
+      </p>
+
+      <h3>Getting started</h3>
+      <ol>
+        <li>Drop <code>.hfe</code> or <code>.img</code> files anywhere on this window, or
+          use <b>Open images</b>. You can open several at once, in either format.</li>
+        <li>Pick a program or a sample from the list on the left.</li>
+        <li>Make your changes. <b>Undo</b> and <b>Redo</b> work throughout.</li>
+        <li>Press <b>Download image</b>, choose <code>.hfe</code> or <code>.img</code>,
+          and copy the file to your Gotek.</li>
+      </ol>
+      <p>
+        Edits are held in this page until you download. The file you opened is never
+        modified, and a disk with unsaved changes is marked with a <code>*</code>.
+      </p>
+
+      <h3>Back up your images first</h3>
+      <p>
+        Please keep a copy of your <code>.hfe</code> and <code>.img</code> files somewhere
+        safe before editing them. This tool writes a new image rather than altering the
+        original, but the copy you put on your Gotek replaces what was there &mdash; and a backup is the only thing
+        that makes a mistake, yours or the tool's, undoable.
+      </p>
+
+      <h3>The honest disclaimer</h3>
+      <p>
+        This is an independent tool with no connection to Akai, offered as-is and with no
+        warranty. It talks to disk images on your computer, never to your sampler, so it
+        cannot reach your hardware directly.
+      </p>
+      <p>
+        What it <i>can</i> do is write an image your sampler does not like. The disk format
+        was worked out by reading a library of 101 original disks and confirming the findings
+        on a real S950, and every image this tool produces is checked against the structures
+        the sampler depends on &mdash; but a malformed image can make an S950 hang while
+        loading, which is recoverable with a power cycle and a good disk, yet no fun in the
+        middle of a session. Try an edited disk before you rely on it, and keep that backup.
+      </p>
+
+      <h3>It all runs here, and you can take it with you</h3>
+      <p>
+        Nothing is uploaded. Every image you open is read and written inside this page, on
+        your own machine.
+      </p>
+      <p>
+        <b>Download source</b> at the top right gives you the whole thing to run locally:
+        plain HTML and JavaScript, no build step and no dependencies. Worth doing if you
+        would rather not depend on this page staying up.
+      </p>
+
+      <h3>Running it yourself</h3>
+      <p>
+        Unzip it and open <code>index.html</code>. That is the whole of it &mdash; the
+        scripts are plain <code>&lt;script&gt;</code> tags rather than ES modules precisely
+        so a <code>file://</code> page can load them, with no server and no build step.
+      </p>
+      <p>
+        Two things a local file cannot have, though, because browsers only grant them to a
+        page served over http or https: <b>Web MIDI</b>, so the MIDI control stays greyed
+        out, and <code>fetch</code>, which <code>selftest.html</code> needs to load a disk
+        image. For either, serve the folder &mdash; any static server will do:
+      </p>
+      <ul>
+        <li><code>node serve.js</code> &mdash; included in the download, and it prints the
+          address. <code>node serve.js 8099</code> to choose the port.</li>
+        <li><code>python -m http.server 8000</code> &mdash; if you have Python rather than
+          Node. Use <code>python3</code> on a Mac or Linux.</li>
+        <li><code>npx serve</code> &mdash; if you would rather not keep anything around.</li>
+      </ul>
+      <p>
+        Then open the address it prints, not the file. <code>selftest.html</code> beside it
+        checks the app end to end in your browser, and the Node scripts in the same folder
+        check the disk format itself against a library of real disks.
+      </p>
+    </div>
+
+    <div id="file" hidden>
+      <table id="fields"></table>
+
+      <!-- Keyboard across the top, then the keygroup list on the left with everything
+           that list used to spell out - key range, envelopes, samples - in the editor
+           beside it. The list is a column of numbers because every other column of it
+           was a worse copy of a field in the property grid. -->
+      <div id="kgWrap" hidden>
+        <canvas id="piano"></canvas>
+
+        <div id="kgLayout">
+          <div id="kgList">
+            <h3>Keygroups <span id="kgCount" class="muted"></span></h3>
+            <div class="scroller"><table id="keygroups"></table></div>
+            <div class="kgbtns">
+              <button id="kgAdd" title="Add a keygroup after the selected one">Add</button>
+              <button id="kgDel" disabled title="Delete the selected keygroup">Delete</button>
+            </div>
+          </div>
+
+          <div id="kgEdit" hidden>
+            <h3>Keygroup <span id="kgEditNum" class="muted"></span></h3>
+            <div class="editor">
+              <div class="envs">
+                <canvas id="vca"></canvas>
+                <div class="vcfrow">
+                  <canvas id="vcf"></canvas>
+                  <div class="amt">
+                    <input type="range" id="vcfAmt" min="-50" max="50" value="0"
+                           orient="vertical" aria-label="VCF amount">
+                    <span id="vcfAmtLabel">amt<br>0</span>
+                  </div>
+                </div>
+                <!-- what the envelopes belong with: the keys they answer to, the velocity
+                     that shapes them, and the LFO that moves them. The zones and flags
+                     are in the column beside. -->
+                <div id="paramsUnder">
+                  <div id="paramsTop" class="pgrid"></div>
+                  <div id="paramsLfo" class="pgrid"></div>
+                </div>
+              </div>
+              <div id="params" class="pgrid"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+
+    </div>
+    </div>
+
+      <div id="waveWrap" hidden>
+        <!-- the title text is its own span: setting textContent on the h3 would
+             take the buttons with it -->
+        <h3><span id="waveTitle">Waveform</span>
+          <span class="rowbuttons" id="sampleOps" hidden>
+            <button id="opTrim">Trim silence</button>
+            <button id="opHalve">Halve rate</button>
+            <button id="opStretch">Fit to tempo</button>
+            <button id="opLoop">Find loop</button>
+            <button id="opSlice">Slice</button>
+          </span>
+        </h3>
+        <!-- the transport stands beside the waveform rather than under it: the dock is
+             the shortest thing on screen, and a row of controls below the canvas was
+             spending the height on nothing -->
+        <div class="waverow">
+          <canvas id="wave"></canvas>
+          <div class="playbar">
+            <button id="play">Play</button>
+            <button id="stop">Stop</button>
+            <label><input type="checkbox" id="useLoop"> honour loop points</label>
+            <label title="Emulate the S950's 6th-order Butterworth low-pass. The slope is exact and the top of its range is measured; the bottom of the sweep and the modulation depths are approximate."><input type="checkbox" id="useVcf" checked> filter + envelope</label>
+          </div>
+        </div>
+      </div>
+  </section>
+</main>
+
+<div id="drop">Drop disk images to open</div>
+
+<dialog id="saveDlg">
+  <form method="dialog">
+    <h2>Download image</h2>
+    <p id="svSource" class="muted"></p>
+
+    <div class="grid">
+      <label for="svName">File name</label>
+      <div class="pair">
+        <input type="text" id="svName" spellcheck="false">
+        <span class="unit" id="svExt">.hfe</span>
+      </div>
+
+      <label>Format</label>
+      <div class="pair stack">
+        <label class="inline"><input type="radio" name="svFmt" id="svHfe" value="hfe" checked>
+          <b>HFE</b> &mdash; Gotek with HxC firmware, and FlashFloppy</label>
+        <label class="inline"><input type="radio" name="svFmt" id="svImg" value="img">
+          <b>IMG</b> &mdash; raw sectors, for FlashFloppy</label>
+      </div>
+    </div>
+
+    <p id="svSummary" class="summary"></p>
+
+    <menu>
+      <span class="spacer"></span>
+      <button type="button" id="svCancel">Cancel</button>
+      <button type="button" id="svGo">Download</button>
+    </menu>
+  </form>
+</dialog>
+
+<dialog id="sliceDlg">
+  <form method="dialog">
+    <h2>Slice into one-shots</h2>
+    <p id="slSource" class="muted"></p>
+
+    <div class="grid">
+      <label for="slSens">Sensitivity</label>
+      <div class="pair">
+        <input type="range" id="slSens" min="0" max="100" value="50">
+        <span class="unit" id="slSensVal">50</span>
+      </div>
+
+      <label for="slMin">Shortest slice</label>
+      <div class="pair">
+        <input type="number" id="slMin" min="5" max="1000" step="5" value="40">
+        <span class="unit">milliseconds</span>
+      </div>
+
+      <label for="slProg">Map to program</label>
+      <div class="pair"><select id="slProg"></select></div>
+
+      <label for="slRoot">From key</label>
+      <div class="pair">
+        <input type="number" id="slRoot" min="0" max="127" value="36">
+        <span class="unit" id="slRootName">C1</span>
+      </div>
+
+      <label for="slRam">Sampler memory</label>
+      <div class="pair">
+        <select id="slRam">
+          <option value="2359296">2.25 MB - expanded</option>
+          <option value="768000">750 KB - stock</option>
+        </select>
+      </div>
+    </div>
+
+    <canvas id="slWave" height="120"></canvas>
+    <p id="slSummary" class="summary"></p>
+
+    <menu>
+      <span class="spacer"></span>
+      <button type="button" id="slCancel">Cancel</button>
+      <button type="button" id="slGo">Slice</button>
+    </menu>
+  </form>
+</dialog>
+
+<dialog id="loopDlg">
+  <form method="dialog">
+    <h2>Find a loop</h2>
+    <p id="lpSource" class="muted"></p>
+
+    <div class="grid">
+      <label for="lpMin">Shortest loop</label>
+      <div class="pair">
+        <input type="number" id="lpMin" min="2" max="5000" step="5" value="40">
+        <span class="unit">milliseconds</span>
+      </div>
+
+      <label for="lpEnd">Loop ends at</label>
+      <div class="pair">
+        <select id="lpEnd">
+          <option value="sample">the end of the sample</option>
+          <option value="current">the end marker it has now</option>
+        </select>
+      </div>
+
+      <label for="lpMode">Loop mode</label>
+      <div class="pair">
+        <select id="lpMode">
+          <option value="L">Looping</option>
+          <option value="A">Alternating</option>
+        </select>
+      </div>
+    </div>
+
+    <canvas id="lpWave" height="120"></canvas>
+    <p id="lpSummary" class="summary"></p>
+
+    <menu>
+      <button type="button" id="lpPreview">Preview</button>
+      <span class="spacer"></span>
+      <button type="button" id="lpCancel">Cancel</button>
+      <button type="button" id="lpGo">Set loop</button>
+    </menu>
+  </form>
+</dialog>
+
+<dialog id="importDlg">
+  <form method="dialog">
+    <h2>Add sample to disk</h2>
+    <p id="impSource" class="muted"></p>
+
+    <div class="grid">
+      <label for="impBeats">Length to use</label>
+      <div class="pair">
+        <input type="number" id="impTrim" step="0.01" min="0.01"> <span class="unit">seconds</span>
+        <button type="button" id="impFit">Trim to fit</button>
+      </div>
+
+      <label for="impName">Sample name</label>
+      <div class="pair">
+        <input type="text" id="impName" maxlength="10" spellcheck="false">
+        <span class="unit">10 characters, upper case</span>
+      </div>
+
+      <label for="impRate">Sample rate</label>
+      <div class="pair"><select id="impRate"></select></div>
+
+      <label for="impPitch">Nominal pitch</label>
+      <div class="pair">
+        <input type="number" id="impPitch" min="0" max="127" value="60">
+        <span class="unit" id="impPitchName">C3</span>
+      </div>
+
+      <label for="impLoop">Loop mode</label>
+      <div class="pair">
+        <select id="impLoop">
+          <option value="O">One-shot</option>
+          <option value="L">Looping</option>
+          <option value="A">Alternating</option>
+        </select>
+      </div>
+
+      <span></span>
+      <label class="inline"><input type="checkbox" id="impNorm" checked> Normalise to full scale</label>
+    </div>
+
+    <p id="impSummary" class="summary"></p>
+
+    <menu>
+      <button type="button" id="impPreview">Preview</button>
+      <span class="spacer"></span>
+      <button type="button" id="impCancel">Cancel</button>
+      <button type="button" id="impAdd">Add</button>
+    </menu>
+  </form>
+</dialog>
+
+<script src="akai.js"></script>
+<script src="audio.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
+
+
+
+
+

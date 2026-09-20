@@ -1,0 +1,9 @@
+# The working copies are LF and the app is served as-is; keep the repository the same
+# so a checkout on Windows does not rewrite every line and make the next diff unreadable.
+* text=auto eol=lf
+
+# Binary, whatever the platform thinks.
+*.mid binary
+*.hfe binary
+*.img binary
+*.zip binary

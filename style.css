@@ -1,0 +1,385 @@
+:root {
+  --ink: #16181d;
+  --muted: #5c6370;
+  --line: #d8dbe2;
+  --panel: #ffffff;
+  --ground: #f4f5f8;
+  --accent: #3e76b8;
+  --accent-dark: #1c4e8c;
+  --warm: #a83800;
+}
+
+* { box-sizing: border-box; }
+
+/* The app fills the window: header, then a row of tree and detail, with the
+   waveform docked along the bottom of the detail pane. Only the middle scrolls. */
+html, body {
+  margin: 0;
+  height: 100%;
+  overflow: hidden;
+  font: 14px/1.5 "Segoe UI", system-ui, -apple-system, Helvetica, Arial, sans-serif;
+  color: var(--ink);
+  background: var(--ground);
+}
+body { display: flex; flex-direction: column; }
+
+header {
+  flex: none;
+  display: flex;
+  align-items: baseline;
+  gap: 18px;
+  padding: 10px 16px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--line);
+  flex-wrap: wrap;
+}
+
+h1 { font-size: 16px; margin: 0; letter-spacing: -0.01em; }
+h2 { font-size: 15px; margin: 0 0 10px; }
+h3 { font-size: 13px; margin: 22px 0 8px; text-transform: uppercase;
+     letter-spacing: 0.06em; color: var(--muted); }
+
+.tools { display: flex; align-items: center; gap: 10px; flex: 1; min-width: 0; }
+
+button, .button {
+  font: inherit;
+  padding: 4px 12px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: #fbfbfc;
+  color: var(--ink);
+  cursor: pointer;
+}
+button:hover:not(:disabled), .button:hover { background: #eef1f6; border-color: #b9c0cc; }
+button:disabled { opacity: 0.45; cursor: default; }
+/* .button is shared with <label>; an <a> also needs the underline taken off.
+   margin-left:auto parks the source link at the far right of the tools row. */
+a.button { text-decoration: none; }
+#getSource { margin-left: auto; white-space: nowrap; }
+
+#status { color: var(--muted); font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+main { display: flex; flex: 1; min-height: 0; align-items: stretch; }
+
+nav {
+  width: 250px;
+  flex: none;
+  overflow: auto;
+  background: var(--panel);
+  border-right: 1px solid var(--line);
+  padding: 8px 0;
+}
+
+nav .empty { color: var(--muted); padding: 8px 14px; }
+
+nav .disk { padding: 5px 12px; font-weight: 600; cursor: pointer; }
+nav .disk.dirty { color: var(--warm); }
+nav .group { padding: 3px 12px 3px 24px; color: var(--muted); font-size: 13px; }
+nav .item {
+  padding: 3px 12px 3px 36px;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+nav .item:hover, nav .disk:hover { background: #eef1f6; }
+nav .item.sel { background: var(--accent); color: #fff; }
+nav .item.away { color: var(--warm); }
+
+#detail { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; }
+#scroll { flex: 1; min-height: 0; overflow: auto; padding: 10px 20px 28px; }
+/* the keyboard is the first thing in the pane, and a margin on top of the pane padding
+   pushed it a long way down a short screen */
+#kgWrap > canvas:first-child { margin-top: 0; }
+
+/* docked, so the waveform is always to hand while the rest scrolls */
+#waveWrap {
+  flex: none;
+  border-top: 1px solid var(--line);
+  background: var(--panel);
+  padding: 4px 20px 10px;
+}
+#waveWrap h3 { margin: 6px 0 6px; }
+#intro { max-width: 560px; color: var(--muted); }
+#intro h2 { color: var(--ink); }
+code { font-family: Consolas, "Cascadia Mono", monospace; font-size: 13px; }
+
+table { border-collapse: collapse; width: 100%; font-size: 13px; }
+#fields { max-width: 620px; }
+#fields td { padding: 2px 10px 2px 0; vertical-align: top; }
+#fields td:first-child { color: var(--muted); width: 190px; }
+
+.scroller { overflow-x: auto; border: 1px solid var(--line); background: var(--panel); }
+.scroller th, .scroller td { padding: 4px 9px; border-bottom: 1px solid #eceef2; white-space: nowrap; }
+.scroller th { text-align: left; background: #f0f2f5; font-weight: 600; position: sticky; top: 0; }
+.scroller tr { cursor: pointer; }
+.scroller tr.sel td { background: #e4edf9; }
+.scroller tr:hover td { background: #f2f6fb; }
+.scroller tr.sel:hover td { background: #dbe8f8; }
+
+/* The display size is fixed here, not in the canvas attributes: the script sets
+   the backing store from the device pixel ratio, and reading that back as the
+   layout size would compound it on every resize. */
+canvas { display: block; width: 100%; background: var(--panel); border: 1px solid var(--line); }
+#piano { height: 96px; margin-bottom: 10px; }
+#wave { height: 150px; }
+
+/* Waveform and transport side by side, the canvas taking whatever is left. */
+.waverow { display: flex; align-items: stretch; gap: 14px; }
+.waverow canvas { flex: 1; min-width: 0; }
+.playbar { flex: none; width: 150px; display: flex; flex-direction: column;
+           align-items: stretch; gap: 6px; font-size: 13px; }
+.playbar label { color: var(--muted); display: flex; align-items: flex-start; gap: 6px;
+                 line-height: 1.25; }
+.playbar label input { flex: none; margin: 1px 0 0; }
+.muted { color: var(--muted); font-weight: 400; text-transform: none; letter-spacing: 0; }
+
+/* --- tree: native disclosure, so nodes toggle without any script */
+nav details { }
+nav summary { cursor: pointer; list-style: none; padding: 4px 12px; }
+nav summary::-webkit-details-marker { display: none; }
+nav summary::before { content: "\25B8"; display: inline-block; width: 12px; color: var(--muted); }
+nav details[open] > summary::before { content: "\25BE"; }
+nav summary.disk { font-weight: 600; }
+nav summary.disk.dirty { color: var(--warm); }
+nav summary.group { padding-left: 24px; color: var(--muted); font-size: 13px; }
+
+/* --- keygroup editor */
+.rowbuttons { float: right; font-weight: 400; text-transform: none; letter-spacing: 0; }
+.rowbuttons button { font-size: 12px; padding: 2px 9px; }
+
+/* Keyboard full width, then a row: the number list on the left, the editor filling
+   what is left. The list is narrow enough that the envelopes and the property grid
+   still sit side by side on a laptop. */
+#kgLayout { display: flex; gap: 18px; align-items: flex-start; }
+
+/* wide enough for its own heading: the list names the column it is in, level with the
+   editor's heading beside it */
+#kgList { flex: none; width: 112px; align-self: flex-start;
+          position: sticky; top: 0; display: flex; flex-direction: column; gap: 6px; }
+#kgList h3 { margin: 0; white-space: nowrap; }
+#kgList .scroller { overflow-x: hidden; overflow-y: auto; max-height: 58vh; }
+#keygroups td { padding: 3px 12px; text-align: right; border-left: 3px solid transparent; }
+/* The number is the whole row, so the selection has to carry on its own - and with
+   several selected the lead, the one the editor shows, has to stand out among them.
+   A tint you have to look for is a selection you cannot trust, so the selected rows are
+   plainly filled and the lead is filled harder still. */
+#keygroups tr.sel td { background: #cfe1f7; color: var(--accent-dark); }
+#keygroups tr.sel:hover td { background: #c3d9f3; }
+#keygroups tr.lead td { background: #a9cdf1; border-left-color: var(--accent); font-weight: 600; }
+#keygroups tr.lead:hover td { background: #9cc4ee; }
+/* shift-clicking a list should extend it, not sweep up the numbers as text */
+#kgList { user-select: none; -webkit-user-select: none; }
+/* a zone naming a sample that is not on this disk - the only thing the wide table
+   said that the editor beside it does not */
+.scroller tr.away td { color: var(--warm); }
+.kgbtns { display: flex; gap: 6px; }
+.kgbtns button { flex: 1; font-size: 12px; padding: 2px 0; }
+
+#kgEdit { flex: 1 1 auto; min-width: 0; }
+#kgEdit h3 { margin-top: 0; }
+
+.editor { display: flex; gap: 18px; align-items: flex-start; flex-wrap: wrap; }
+.envs { flex: 1 1 420px; min-width: 320px; }
+#vca, #vcf { height: 120px; }
+#vca { margin-bottom: 8px; }
+.vcfrow { display: flex; gap: 8px; align-items: stretch; }
+.vcfrow canvas { flex: 1; min-width: 0; }
+.amt { display: flex; flex-direction: column; align-items: center; width: 54px; flex: none; }
+.amt input[type=range] {
+  writing-mode: vertical-lr;
+  direction: rtl;
+  width: 24px;
+  height: 96px;
+  margin: 0;
+}
+.amt span { font-size: 11px; color: var(--muted); text-align: center; line-height: 1.3; margin-top: 4px; }
+
+/* --- the info strip: one line under the toolbar */
+#infoBar {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 7px 20px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--line);
+  white-space: nowrap;
+  overflow-x: auto;
+  font-size: 13px;
+}
+#infoBar #fileName { font-weight: 600; font-size: 14px; }
+#infoBar .rowbuttons { float: none; }
+/* the facts give way first: they truncate rather than push the strip onto two lines */
+#infoBar #fileFacts { margin-left: auto; padding-left: 14px;
+                      min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+#infoBar > * { flex: none; }
+#infoBar #fileFacts { flex: 0 1 auto; }
+
+#smpParams, #progParams { display: inline-flex; align-items: center; gap: 14px; }
+#smpParams label, #progParams label { color: var(--muted); display: inline-flex; align-items: center; gap: 5px; }
+#smpParams input[type=number], #progParams input[type=number] { width: 62px; }
+#smpParams input, #smpParams select, #progParams input { font: inherit; padding: 2px 5px;
+             border: 1px solid var(--line); border-radius: 3px; }
+
+.pgrid { display: grid; grid-template-columns: auto minmax(124px, 200px); gap: 3px 10px;
+         align-items: center; font-size: 13px; }
+.pgrid label { color: var(--muted); }
+.pgrid select { font: inherit; padding: 2px 5px; border: 1px solid var(--line);
+                border-radius: 3px; width: 100%; }
+
+/* A parameter is something you sweep, so it is a slider with its figure beside it -
+   wide enough to aim with, and the number still exact for reading back. */
+.pgrid .slider { display: flex; align-items: center; gap: 7px; }
+.pgrid .slider input[type=range] { flex: 1; min-width: 0; width: auto; margin: 0;
+                                   height: 15px; accent-color: var(--accent); }
+.pgrid .slider .val { flex: none; width: 27px; text-align: right; font-size: 12px;
+                      font-variant-numeric: tabular-nums; }
+.pgrid .head { grid-column: 1 / -1; margin-top: 10px; font-weight: 600; color: var(--ink);
+               border-bottom: 1px solid var(--line); padding-bottom: 2px; }
+/* the 'From keyboard' button rides in the Key range heading, and turns warm while it
+   is armed - the same colour the keyboard marks the keys it is about to take */
+.pgrid .head button { float: right; font-size: 11px; padding: 0 8px; margin-top: -1px;
+                      font-weight: 400; }
+.pgrid .head button.armed { background: var(--warm); border-color: var(--warm); color: #fff; }
+.pgrid .head button.armed:hover { background: #8d2f00; border-color: #8d2f00; }
+
+/* Under the envelopes, two grids side by side: the keys and the velocity, then the LFO.
+   They wrap rather than squeeze when the pane is narrow. */
+#paramsUnder { display: flex; gap: 20px; align-items: flex-start; margin-top: 10px;
+               flex-wrap: wrap; }
+#paramsTop, #paramsLfo { flex: 1 1 210px; min-width: 200px; }
+/* and the third column takes the rest of the row */
+#params { flex: 1 1 260px; min-width: 240px; }
+
+/* --- add-sample dialog */
+dialog {
+  border: 1px solid #b9c0cc;
+  border-radius: 6px;
+  padding: 0;
+  width: 520px;
+  max-width: 94vw;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.22);
+  color: var(--ink);
+}
+dialog::backdrop { background: rgba(20, 24, 32, 0.35); }
+dialog form { padding: 16px 18px 14px; }
+dialog h2 { font-size: 15px; margin: 0 0 6px; }
+dialog p { margin: 0 0 12px; }
+
+dialog .grid { display: grid; grid-template-columns: 120px 1fr; gap: 8px 12px; align-items: center; }
+dialog .grid > label { color: var(--muted); font-size: 13px; }
+dialog .pair { display: flex; align-items: center; gap: 8px; }
+dialog .pair input[type=number] { width: 88px; }
+dialog .pair input[type=text] { width: 140px; text-transform: uppercase; }
+dialog select { min-width: 150px; }
+dialog input, dialog select {
+  font: inherit; padding: 3px 6px; border: 1px solid var(--line); border-radius: 3px;
+}
+dialog .unit { color: var(--muted); font-size: 12px; }
+dialog label.inline { font-size: 13px; display: flex; align-items: center; gap: 6px; }
+
+dialog .summary {
+  margin: 14px 0 0;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: #fafbfc;
+  font-size: 13px;
+  white-space: pre-line;
+  min-height: 42px;
+}
+dialog .summary.bad { color: #a8203a; border-color: #e4b6bf; background: #fdf6f7; }
+
+dialog menu { display: flex; gap: 8px; align-items: center; margin: 14px 0 0; padding: 0; }
+dialog menu .spacer { flex: 1; }
+
+#drop {
+  position: fixed;
+  inset: 0;
+  display: none;
+  place-items: center;
+  background: rgba(62, 118, 184, 0.12);
+  border: 3px dashed var(--accent);
+  font-size: 20px;
+  color: var(--accent-dark);
+  z-index: 10;
+}
+#drop.on { display: grid; }
+
+
+
+
+
+
+/* The running code's build, in the header. Quiet until you look for it. */
+#buildStamp {
+  font-size: 11px;
+  font-weight: normal;
+  opacity: 0.55;
+  letter-spacing: 0.02em;
+  margin-left: 6px;
+  vertical-align: 2px;
+}
+
+/* Slice dialog: the waveform with its cut markers, and a cost line that turns red
+   when the plan will not fit. */
+#slWave {
+  display: block;
+  width: 100%;
+  height: 120px;
+  margin: 10px 0 4px;
+  border: 1px solid var(--line, #ccc);
+  border-radius: 3px;
+}
+
+#slSens { width: 180px; vertical-align: middle; }
+
+/* the loop dialog draws the tail of the sample, so the join can be seen as well as heard */
+#lpWave {
+  display: block;
+  width: 100%;
+  height: 120px;
+  margin: 10px 0 4px;
+  border: 1px solid var(--line, #ccc);
+  border-radius: 3px;
+}
+
+.summary.bad { color: #b3261e; }
+
+/* The intro is the whole first screen now, so it gets room to breathe and its own
+   rhythm - but it still has to scroll on a laptop, hence the max-width rather than
+   filling the pane. */
+#intro { max-width: 680px; padding-bottom: 32px; }
+#intro .lede { font-size: 15px; color: var(--ink); }
+#intro h3 {
+  margin: 22px 0 6px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+#intro ul, #intro ol { margin: 6px 0; padding-left: 20px; }
+#intro li { margin: 4px 0; }
+#intro b { color: var(--ink); font-weight: 600; }
+#intro code {
+  background: var(--soft, rgba(127, 127, 127, 0.12));
+  padding: 1px 4px;
+  border-radius: 3px;
+}
+
+/* Save dialog: the two container choices stack rather than sitting side by side, so
+   the explanation after each one has room. */
+.pair.stack { display: flex; flex-direction: column; gap: 4px; align-items: flex-start; }
+.pair.stack .inline { white-space: normal; }
+#svName { min-width: 220px; }
+
+/* MIDI input: two selects that read as one control in the toolbar. */
+.midi { display: inline-flex; gap: 4px; align-items: center; }
+.midi select {
+  font: inherit;
+  padding: 2px 4px;
+  max-width: 190px;
+}
+.midi select:disabled { opacity: 0.5; }
