@@ -1,0 +1,762 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Akai S900 / S950 Disk Format</title>
+<style>
+  @page { size: A4; margin: 18mm 16mm; }
+  body { font: 10.5pt/1.5 "Segoe UI", "Helvetica Neue", Arial, sans-serif; color: #16181d; }
+  h1 { font-size: 21pt; margin: 0 0 2mm; letter-spacing: -0.01em; }
+  h2 { font-size: 13.5pt; margin: 9mm 0 2.5mm; padding-bottom: 1.5mm;
+       border-bottom: 1.5px solid #16181d; page-break-after: avoid; }
+  h3 { font-size: 11pt; margin: 5mm 0 1.5mm; page-break-after: avoid; }
+  p  { margin: 0 0 2.5mm; }
+  .sub { color: #555b66; font-size: 9.5pt; margin-bottom: 6mm; }
+  table { border-collapse: collapse; width: 100%; margin: 2mm 0 4mm;
+          font-size: 9.5pt; page-break-inside: avoid; }
+  th { text-align: left; background: #f0f1f4; font-weight: 600;
+       border-bottom: 1px solid #c8ccd4; padding: 1.6mm 2mm; }
+  td { border-bottom: 1px solid #e4e6eb; padding: 1.5mm 2mm; vertical-align: top; }
+  code, .mono { font-family: "Cascadia Mono", Consolas, "Courier New", monospace; font-size: 9.5pt; }
+  td.mono, th.mono { white-space: nowrap; }
+  pre { font-family: "Cascadia Mono", Consolas, "Courier New", monospace;
+        font-size: 9pt; line-height: 1.45; background: #f6f7f9;
+        border-left: 2.5px solid #9aa2b1; padding: 3mm 4mm; margin: 2mm 0 4mm;
+        page-break-inside: avoid; white-space: pre-wrap; }
+  .note { background: #f6f7f9; border-left: 2.5px solid #9aa2b1;
+          padding: 2.5mm 4mm; margin: 3mm 0; font-size: 9.5pt; page-break-inside: avoid; }
+  .ok { color: #1a7f3c; font-weight: 600; }
+  .no { color: #b4232a; font-weight: 600; }
+  footer { margin-top: 9mm; padding-top: 2.5mm; border-top: 1px solid #c8ccd4;
+           font-size: 8.5pt; color: #555b66; }
+  .warn { border-left: 3px solid #b00; padding-left: 10px; }
+</style>
+</head>
+<body>
+
+<h1>Akai S900 / S950 Disk Format</h1>
+<p class="sub">Physical layout, directory, allocation table, sample files and program files — verified against 202 disk images, with the program parameters confirmed on an Akai S950 front panel.</p>
+
+<h2>1. Provenance</h2>
+<p>The disk, directory, allocation-table and sample-file layouts in sections 3–6 are
+documented at <code>mda.smartelectronix.com/akai/akaiinfo.htm</code> ("Akai Disk &amp; File
+Formats"). Every field listed here was independently verified by decoding real disk images:
+two Gotek/HxC sticks of 101 images each, 202 images in total, all decoding with zero CRC
+errors and zero unreadable sectors.</p>
+<p>The <strong>program file layout in section 7 is not covered by that document</strong>. It was
+derived from the corpus and is stated here with the evidence supporting it.</p>
+
+
+<p class="note">Every count in this document is re-checked against the library by
+<span class="mono">docs/format-check.js</span> in the web repository, which fails if a
+figure no longer matches what the disks say. Last run: 20 September 2026, 38 claims, all
+holding.</p>
+<h2>2. Physical format</h2>
+<table>
+  <tr><th style="width:32%">Property</th><th>Value</th></tr>
+  <tr><td>Container</td><td class="mono">HXCPICFE</td></tr>
+  <tr><td>HFE revision</td><td>0</td></tr>
+  <tr><td>Interface mode</td><td>12 (S950 double density)</td></tr>
+  <tr><td>Encoding</td><td>ISO/IBM MFM</td></tr>
+  <tr><td>Bit rate</td><td>250 kbit/s</td></tr>
+  <tr><td>Geometry</td><td>80 cylinders &times; 2 heads &times; 5 sectors</td></tr>
+  <tr><td>Sector size</td><td>1024 bytes (size code 3)</td></tr>
+  <tr><td>Sector IDs</td><td>1 to 5</td></tr>
+  <tr><td>Total capacity</td><td>819 200 bytes (800 KB)</td></tr>
+</table>
+
+<p>Sectors are laid out linearly as:</p>
+<pre>LBA = (cylinder * 2 + head) * 5 + (sector_id - 1)</pre>
+
+<p>Within an HFE image, each track's MFM cell data for both sides is interleaved in
+256-byte chunks — 256 bytes of side 0, then 256 bytes of side 1, repeating. Cells are
+stored least-significant-bit first. Sectors are framed conventionally: three
+<code>0xA1</code> sync bytes with a missing clock (cell pattern <code>0x4489</code>),
+then an address mark — <code>0xFE</code> for an ID field, <code>0xFB</code> or
+<code>0xF8</code> for a data field — with CRC-16/CCITT (polynomial <code>0x1021</code>,
+initial value <code>0xFFFF</code>) computed across the three sync bytes, the mark and
+the payload.</p>
+
+<h3>2.1 The whole track, exactly</h3>
+<p>Reading a disk only needs the sectors found; <i>writing</i> one from nothing needs the
+entire track, gaps included. The layout below is not taken from the IBM System 34 spec but
+measured from the library, where all 101 disks agree without exception: a single identical
+512-byte HFE header, 25000 bytes per track, sectors 1 to 5 in order with <b>no skew</b> on
+all 160 track/sides, and the first ID address mark at <b>bit 4928</b> of every one of them.</p>
+
+<p>Each side holds 6250 MFM bytes:</p>
+<pre>gap 4a   0x4E x 230
+sync     0x00 x 12
+IAM      0xC2 0xC2 0xC2 0xFC        (sync cell pattern 0x5224)
+gap 1    0x4E x 50
+
+  five sectors, 1172 bytes each:
+    sync   0x00 x 12
+    ID     0xA1 0xA1 0xA1 0xFE, cyl, head, sector, size=3, CRC hi, CRC lo
+    gap 2  0x4E x 22
+    sync   0x00 x 12
+    data   0xA1 0xA1 0xA1 0xFB, 1024 bytes, CRC hi, CRC lo
+    gap 3  0x4E x 86
+
+gap 4b   0x4E x 94
+
+296 + 5 x 1172 + 94 = 6250</pre>
+
+<p>One detail matters only to a writer. A side is 12500 cell bytes, which is 48 whole
+256-byte chunks and then 212 bytes of one, so <b>44 bytes of each side's last chunk are
+padding</b> that the interleave never addresses. The drive that wrote these disks left its
+gap fill running through them: the padding reads <code>0x49 0x2A</code> repeating, which is
+exactly MFM-encoded <code>0x4E</code> in this least-significant-bit-first cell packing.
+Filling those bytes with anything else &mdash; zeros, most obviously &mdash; still produces a
+perfectly readable image, but not an identical one.</p>
+
+<p>That the layout is complete and correct is not argued but demonstrated: rebuilding each of
+the 101 disks from its 819,200 bytes of sectors alone, with no reference to the original file,
+reproduces that file <b>byte for byte</b> in all 101 cases.</p>
+
+<h2>3. Logical layout</h2>
+<p>The disk is addressed as 800 blocks of 1024 bytes. Block 0 carries both the directory
+and the allocation table; file data begins at block 4.</p>
+<table>
+  <tr><th class="mono" style="width:18%">Offset</th><th style="width:14%">Size</th><th>Contents</th></tr>
+  <tr><td class="mono">0x000</td><td>1536</td><td>Directory — 64 entries of 24 bytes</td></tr>
+  <tr><td class="mono">0x600</td><td>1600</td><td>Allocation table — one 16-bit entry per block</td></tr>
+  <tr><td class="mono">0xC40</td><td>960</td><td>Unused</td></tr>
+  <tr><td class="mono">0x400</td><td>3072</td><td>Blocks 1–3, unused</td></tr>
+  <tr><td class="mono">0x1000</td><td>—</td><td>Block 4, first file data</td></tr>
+</table>
+<p>A high-density disk extends the allocation table to 3200 bytes, occupying bytes
+1536 to 4736.</p>
+
+<h2>4. Directory entry (24 bytes)</h2>
+<table>
+  <tr><th class="mono" style="width:14%">Offset</th><th style="width:12%">Size</th><th style="width:20%">Format</th><th>Description</th></tr>
+  <tr><td class="mono">0</td><td>10</td><td>ASCII</td><td>Filename. <code>0x00</code> in the first byte marks a free slot</td></tr>
+  <tr><td class="mono">10</td><td>6</td><td>—</td><td>Zero</td></tr>
+  <tr><td class="mono">16</td><td>1</td><td>ASCII</td><td>File type — see below</td></tr>
+  <tr><td class="mono">17</td><td>3</td><td>unsigned LE</td><td>File length in bytes, including the file's own header</td></tr>
+  <tr><td class="mono">20</td><td>2</td><td>unsigned LE</td><td>Starting block</td></tr>
+  <tr><td class="mono">22</td><td>2</td><td>—</td><td>S900 ID = {0, 0}</td></tr>
+</table>
+
+<h3>File types</h3>
+<table>
+  <tr><th class="mono" style="width:14%">Byte</th><th style="width:22%">Type</th><th>Notes</th></tr>
+  <tr><td class="mono">'S'</td><td>Sample</td><td>60-byte header followed by 12-bit sample data</td></tr>
+  <tr><td class="mono">'P'</td><td>Program</td><td>38-byte header followed by 70-byte keygroups</td></tr>
+  <tr><td class="mono">'D'</td><td>Drum set</td><td>Typically 262 bytes</td></tr>
+  <tr><td class="mono">'O'</td><td>Overall settings</td><td>Typically 40 bytes</td></tr>
+</table>
+<p>Filenames are plain ASCII, space-padded — not the AKAII character set used by the
+S1000. Lower-case letters are legal on disk even though the front panel cannot enter them.
+Two files <i>of the same type</i> must not share a name, but a name may be reused across
+types, and in practice often is: naming a program after the single sample it plays is a
+common convention on these disks. DSKA0044 does it thirteen times — <span class="mono">GLOCK
+1</span>, <span class="mono">MARIMBA 2</span> and eleven others each exist as both a program
+and a sample — and DSKA0057 and DSKA0080 do the same. The reference document's flat "must not
+share a name" is too strong; a writer that enforces it across the whole directory will refuse
+to reproduce the library's own naming.</p>
+
+<h3>The keygroup and sample arena</h3>
+<p>Keygroup records and sample descriptors share one region of the sampler's RAM, and the
+zone pointers of section 7 are addresses within it. The arrangement is entirely determined
+by the directory: each program's keygroups are packed 70 bytes apart in directory order,
+a <i>single empty 70-byte record</i> separates consecutive programs, and the sample
+descriptor table follows the last program. So</p>
+<pre>    keygroup k of program j  =  arena + 70 x (sum over i&lt;j of (keygroups_i + 1) + k)
+    sample descriptor table  =  arena + 70 x (keygroups + programs - 1)</pre>
+<p>The empty record between programs is what makes the <span class="mono">- 1</span> correct:
+there is one separator after each program except the last. Checked against the library, this
+predicts all 1774 keygroup chain pointers on all 98 disks that have them, and the table base on
+every disk, exactly.</p>
+<p>The arena start is not stored anywhere. It is 0xC5F6 on 97 of the 98 disks that reveal it;
+DSKA0023 uses 0xC47E and the two sample-free <span class="mono">KEYGRP PGM</span> disks use
+0xAB90, so it must be read back from the disk rather than assumed — from the zone pointers
+where there are any, since those are the ones the sampler follows, and from the keygroup chains
+otherwise.</p>
+<p><b>A writer must recompute these pointers, not adjust them.</b> Both of this project's
+implementations originally shifted the stored values by a delta whenever a program changed
+size. That conflated the chain pointers with the zone pointers, which live in the same arena
+but are reached differently, and the error compounded across edits: one disk ended up with its
+chains 27,600 bytes below the arena and two programs sharing a record, which crashed the S950
+on load while every other structure on the disk checked out. Deriving the layout from the
+directory cannot drift.</p>
+
+<h3>The directory has no holes</h3>
+<p>Entries occupy slots 0..<i>n</i>−1 with nothing empty in between. All 100 images in the
+library are like this, and they are grouped by type in the order programs, overall settings,
+drum set, samples — 98 disks are exactly that sequence and the remaining two hold programs
+only. Nothing in the format <i>requires</i> contiguity, but the sampler appears to rely on it:
+a disk that had four samples deleted, leaving slots 4–7 blank while ten files sat above them,
+crashed the S950 on load even though every other structure on it checked out — its allocation
+table, chains, headers, RAM addresses and zone pointers were all correct. Closing the gap, and
+changing nothing else, made the same disk load. The likely reading is that the loader walks the
+directory until the first empty slot and stops, so the programs it had already read went on to
+reference samples that were never loaded.</p>
+<p>The practical rule for a writer: deleting a file must shift every later entry down a slot
+rather than simply blanking the one being removed. Because the relative order is preserved, the
+position-based zone pointers of section 7 stay correct across the move.</p>
+
+<h2>5. Allocation table</h2>
+<p>One unsigned 16-bit little-endian entry per block, starting at byte 1536. The entry for
+a block holds the number of the next block in that file's chain.</p>
+<table>
+  <tr><th class="mono" style="width:22%">Value</th><th>Meaning</th></tr>
+  <tr><td class="mono">0x0000</td><td>Block is free</td></tr>
+  <tr><td class="mono">0x8000</td><td>End of chain — this is the file's last block</td></tr>
+  <tr><td>other</td><td>Next block in the chain</td></tr>
+</table>
+<p>To read a file: start at the directory entry's starting block, follow the chain until
+<code>0x8000</code>, concatenate the blocks, then truncate to the directory's length field.
+Chains are usually contiguous but must not be assumed to be. A reader should guard against
+loops and out-of-range links.</p>
+
+<h2>6. Sample files</h2>
+<h3>6.1 Header (60 bytes)</h3>
+<table>
+  <tr><th class="mono" style="width:14%">Offset</th><th style="width:12%">Size</th><th style="width:20%">Format</th><th>Description</th></tr>
+  <tr><td class="mono">0x00</td><td>10</td><td>ASCII</td><td>Filename</td></tr>
+  <tr><td class="mono">0x0A</td><td>6</td><td>—</td>
+      <td>Name padding. Zero on all but 13 samples, which pad with ASCII space instead —
+      the same two conventions the program header uses</td></tr>
+  <tr><td class="mono">0x10</td><td>4</td><td>unsigned LE</td><td>Number of sample words (N)</td></tr>
+  <tr><td class="mono">0x14</td><td>2</td><td>unsigned LE</td><td>Sample rate in Hz</td></tr>
+  <tr><td class="mono">0x16</td><td>2</td><td>unsigned LE</td>
+      <td>Tuning, in 16ths of a semitone. The panel splits it: <strong>nominal pitch</strong> is
+      the value divided by 16, a MIDI note number (C3 = 60, stored 960), and <strong>fine
+      pitch</strong> is the remainder, 0..15</td></tr>
+  <tr><td class="mono">0x18</td><td>2</td><td>signed LE</td>
+      <td><strong>panel</strong>. Sample loudness. <em>Not</em> zero as the reference document
+      has it — non-zero in 200 of 1110 samples, spanning −31..+50</td></tr>
+  <tr><td class="mono">0x1A</td><td>1</td><td>ASCII</td><td>Loop mode — <code>O</code> one-shot, <code>L</code> loop, <code>A</code> alternating</td></tr>
+  <tr><td class="mono">0x1B</td><td>1</td><td>—</td><td>Zero</td></tr>
+  <tr><td class="mono">0x1C</td><td>4</td><td>unsigned LE</td><td>End marker</td></tr>
+  <tr><td class="mono">0x20</td><td>4</td><td>unsigned LE</td><td>Start marker</td></tr>
+  <tr><td class="mono">0x24</td><td>4</td><td>unsigned LE</td><td>Loop length</td></tr>
+  <tr><td class="mono">0x28</td><td>2</td><td>unsigned LE</td>
+      <td>Pointer to the sample's loop descriptors in RAM. Base 0xB6F4, 10 bytes per
+      descriptor. See below</td></tr>
+  <tr><td class="mono">0x2A</td><td>1</td><td>—</td><td>Zero</td></tr>
+  <tr><td class="mono">0x2B</td><td>1</td><td>ASCII</td>
+      <td>Loop direction — <code>N</code> normal, <code>R</code> reverse, in the same
+      style as the loop mode at 0x1A. Only DSKA0083 <span class="mono">PHONE 3</span> is
+      reversed, which is why the byte looks constant</td></tr>
+  <tr><td class="mono">0x2C</td><td>10</td><td>—</td><td>Zero</td></tr>
+  <tr><td class="mono">0x36</td><td>3</td><td>unsigned LE</td>
+      <td><strong>Address of the sample in sample RAM.</strong> See below</td></tr>
+  <tr><td class="mono">0x39</td><td>3</td><td>—</td><td>Zero</td></tr>
+</table>
+
+<p>The two bytes at 0x18 are listed as zero by the reference document. They are not: 200 of
+the 1110 samples carry a value there, a signed 16-bit little-endian quantity spanning
+−31 to +50. It is the <strong>sample loudness</strong>, confirmed on the panel —
+DSKA0002 <span class="mono">TONE 1</span> reads loudness 30 and stores 30.</p>
+<p>The same panel page resolves the tuning word at 0x16. It is displayed as two figures rather
+than one: nominal pitch, the value divided by 16 and shown as a note name, and fine pitch, the
+remainder. TONE 1's 960 is nominal pitch 60 (C3) with fine pitch 0. Across the corpus the
+nominal part spans MIDI 24 to 96 with no value outside the valid range, and the fine part is
+non-zero on 71 samples.</p>
+
+<h3>How the three loop fields combine</h3>
+
+<p>The header carries an end marker, a start marker and a loop length, and the names
+invite the wrong reading. The machine loops <strong>backwards from the end marker by the
+loop length</strong> — it plays <span class="mono">end &minus; length .. end</span> round
+and round — and the start marker at 0x20 is <em>not</em> where the loop begins. It is the
+point playback starts from, and it is simply 0 in <strong>250 of the 324</strong> looped
+samples; it equals <span class="mono">end &minus; length</span> in only <strong>8</strong>.
+A player that treats the start marker as the loop start gets 316 of 324 wrong.</p>
+
+<p>Nor does a loop have to run to the end of the sample. The end marker equals the sample
+length in <strong>208 of 324</strong>, so a third of them stop short — and <strong>30</strong>
+stop short by more than 50 ms, with a median tail of <strong>277 ms</strong>. That tail is
+the release: what sounds after the key comes up and the loop is left. Looping to the end of
+the sample instead plays the release round and round, and leaves none of it to hear.</p>
+
+<p><span class="mono">DSKA0051 BOWEDBASS</span> is the clearest case: all nine of its samples
+loop before the end, leaving between 0.12 and 0.48 s of tail. Its <span class="mono">TONE
+E1</span> is 53,496 words long, ends its loop at 43,437 with a length of 10,214 — so it loops
+33,223 .. 43,437 and lets the last 10,059 words play out once.</p>
+
+<p>Where the length would reach back past the start of the data it would be nonsense; no
+sample in the library does, so nothing here says what the machine would do about it.</p>
+
+<p>The pointer at 0x28 indexes a table of <strong>10-byte loop descriptors</strong> in RAM.
+Every disk's first sample points at <span class="mono">0xB6F4</span>, and the gap to the next
+sample's pointer is always a whole number of 10-byte records — between 2 and 9 of them.
+How many a sample consumes follows from its loop mode and its size. Writing
+<span class="mono">f</span> for the number of whole 128&nbsp;KB pages the sample data fills
+(<span class="mono">f = floor(2 × words / 131072)</span>):</p>
+<table>
+  <tr><th style="width:22%">Loop mode</th><th style="width:26%">Records consumed</th><th>Fit</th></tr>
+  <tr><td>One-shot <span class="mono">O</span></td><td class="mono">2 + f</td><td class="ok">723 of 725</td></tr>
+  <tr><td>Looping <span class="mono">L</span></td><td class="mono">3 + f</td><td class="ok">267 of 270</td></tr>
+  <tr><td>Alternating <span class="mono">A</span></td><td class="mono">3 × (1 + f)</td><td>12 of 16</td></tr>
+</table>
+<p>1002 of the 1011 consecutive spacings in the corpus, and the shape of it makes sense: a
+one-shot needs a descriptor pair, a loop needs a third for the loop itself, and an alternating
+loop needs the whole set repeated for every page the sample spans — which is what
+bidirectional playback would require, since direction has to be tracked within each page.
+The nine exceptions are all samples above 128&nbsp;KB.</p>
+
+<p>Splitting the corpus at that threshold sharpens the picture. Below 128&nbsp;KB of RAM the
+count is not merely a good fit but exact, and simpler than the formula above: <b>2 records
+for a one-shot, 3 for a loop</b>, alternating included — 651, 236 and 6 consecutive pairs
+respectively, with no exception. At or above 128&nbsp;KB it is not a function of the header
+at all: two one-shots of 280,000&nbsp;bytes each, <span class="mono">CHINA</span> on
+DSKA0016 and <span class="mono">TR808 CYM</span> on DSKA0007, consume 3 and 4 records, and
+padding out the rule with the start address or the number of page boundaries crossed does
+not separate them either. The likeliest explanation is that the descriptor count reflects
+how many loop points the sample actually carried — the S950 allows several per sample —
+which is held in the sampler rather than in these 60 bytes. A writer should treat the
+formula as exact below 128&nbsp;KB and as an estimate above it.</p>
+
+<p>That estimate turns out not to matter. A disk written with every <i>keygroup</i> chain
+pointer — the equivalent RAM pointer in the program records — deliberately corrupted to
+<span class="mono">0x5A5A</span> still plays its programs correctly on an S950. The sampler
+rebuilds its RAM arena when it loads a disk rather than reading the stored addresses, so these
+fields record where things sat when the disk was saved; they are not instructions to be
+obeyed. Write them to match what the hardware would have written, but an approximation cannot
+break a disk. Only the chain pointers were corrupted in that test, the sample address and
+descriptor pointer being the same class of field rather than separately proven.</p>
+
+<p>The three bytes at 0x36 give the address the sample occupies in the sampler's sample
+memory, and the arithmetic is exact. On 99 of the 101 disks the first sample sits at
+<span class="mono">0x18000</span>, and taking a disk's samples in directory order each
+subsequent address follows from the one before by</p>
+<pre>ceil(2 × words / 16) × 16</pre>
+<p>in <strong>1011 of 1011</strong> consecutive pairs across the corpus. Two consequences
+follow. Samples are stored back to back in memory in disk order, on a 16-byte grid. And a
+sample occupies <em>two bytes per word</em> in RAM against one and a half on disk: the 12-bit
+packing of 6.2 is a disk format only, expanded to 16-bit words when loaded.</p>
+
+<p>The directory length relates to the sample count exactly:</p>
+<pre>directory_length == 60 + 1.5 * N</pre>
+<p>This holds for all 1110 samples on the corpus without exception, which both confirms the
+sample-count field and establishes that data is stored at 12 bits per sample.</p>
+
+<h3>6.2 Sample data — 12-bit signed, split packing</h3>
+<p>The payload is <code>1.5 &times; N</code> bytes. The packing is unusual: the sample is
+split in half, and the low nibbles of <em>both</em> halves are interleaved through the first
+N bytes, with the second half's high bytes following at the end.</p>
+<pre>First N bytes, read as N/2 pairs. For pair i (i = 0 .. N/2-1):
+
+    byte[2i]    high nibble  = low 4 bits of word i
+    byte[2i]    low  nibble  = low 4 bits of word (N/2 + i)
+    byte[2i+1]               = high 8 bits of word i
+
+Then N/2 bytes:
+
+    byte[N + i]              = high 8 bits of word (N/2 + i)
+
+Reassemble, and sign-extend from 12 bits:
+
+    word  = (high8 &lt;&lt; 4) | low4
+    value = (word &gt;= 2048) ? word - 4096 : word</pre>
+
+<p>Verification — decoding one sample three ways and measuring the mean absolute difference
+between consecutive values (a correct decode yields a smooth waveform; a wrong one yields
+noise):</p>
+<table>
+  <tr><th style="width:44%">Interpretation</th><th style="width:26%">Peak amplitude</th><th>Mean sample delta</th></tr>
+  <tr><td>16-bit little-endian words</td><td><span class="no">18983</span> — outside 12-bit range</td><td>1452</td></tr>
+  <tr><td>Naive 12-bit pairs, 2 per 3 bytes</td><td>2048</td><td>1028</td></tr>
+  <tr><td><strong>Split packing, as above</strong></td><td><span class="ok">1398</span> — within range</td><td><span class="ok">112.8</span></td></tr>
+</table>
+
+<h2>7. Program files</h2>
+<div class="note"><strong>Not covered by the reference document.</strong> Everything in this
+section was derived from a corpus of 390 programs and 1908 keygroups, then checked field by
+field against an Akai S950 front panel; fields marked <strong>panel</strong> were read directly
+off the hardware. Figures given as "of 1899" exclude DSKA0049, the one image whose contents
+differ between the two sticks; those given as "of 1908" cover every keygroup on both.</div>
+
+<p>A program is a fixed header followed by one 70-byte record per keygroup:</p>
+<pre>file_length == 38 + 70 * keygroup_count</pre>
+<p>All 391 distinct programs across both sticks satisfy this exactly, in uniform steps of 70,
+from 108 bytes (1 keygroup) to 4518 bytes (64 keygroups). The program header begins with the
+program name in the first 10 bytes, matching the directory entry.</p>
+
+<h3>7.1 Program header (38 bytes)</h3>
+<p>The header is the first 38 bytes of the file. Six of its fields are identifiable from the
+corpus alone, and two of them are exact.</p>
+<table>
+  <tr><th class="mono" style="width:12%">Offset</th><th style="width:30%">Field</th><th>Notes</th></tr>
+  <tr><td class="mono">0 .. 9</td><td>Program name</td><td>10 chars ASCII, matching the directory entry</td></tr>
+  <tr><td class="mono">10 .. 15</td><td>Name padding</td>
+      <td>ASCII space in all 341 programs an S900 wrote, 0 in all 49 an S950 wrote</td></tr>
+  <tr><td class="mono">16, 17</td><td>KEY &rarr; loudness</td>
+      <td><strong>panel</strong>, signed 16-bit. Zero in 386 of 390 programs. DSKA0078
+      <span class="mono">SOFT FLUTE</span> reads −6 and stores 250, 255 — the
+      sign extension a 16-bit field needs. See the note below on the one exception</td></tr>
+  <tr><td class="mono">18, 19</td><td>Load address</td>
+      <td>Unsigned 16-bit, 0xAB90..0xD3A2. See below</td></tr>
+  <tr><td class="mono">20</td><td>Reserved</td><td>Constant 0</td></tr>
+  <tr><td class="mono">21</td><td>Positional crossfade</td>
+      <td><strong>panel</strong>. 0 off, 255 on. Of the multi-keygroup programs that set it,
+      92% have overlapping keygroups against 32% of those that do not</td></tr>
+  <tr><td class="mono">22</td><td>Format marker</td>
+      <td>255 in all 341 S900 programs, 0 in all 49 S950 ones — the same split as the
+      filter envelope in 7.4, with no exceptions</td></tr>
+  <tr><td class="mono">23</td><td>Keygroup count</td>
+      <td>Equals the count implied by the file length in <strong>390 of 390</strong> programs</td></tr>
+  <tr><td class="mono">24, 25</td><td>Reserved</td><td>Constant 0</td></tr>
+  <tr><td class="mono">26</td><td>MIDI program number</td>
+      <td><strong>panel</strong>, zero-based here and shown counting from 1: DSKA0002
+      <span class="mono">SNARE 1</span> stores 1 and reads MIDI Prog 2. Matches the program's
+      position on its disk in 371 of 390; where it does not it preserves creation order, as on
+      DSKA0022 where the five KICK-SN programs carry 4, 0, 1, 2, 3 while sitting in the
+      directory as P5, P1, P2, P3, P4</td></tr>
+  <tr><td class="mono">27</td><td>unknown</td><td>255 in 388 of 390</td></tr>
+  <tr><td class="mono">28 .. 37</td><td>Reserved</td><td>Constant 0</td></tr>
+</table>
+<p>Only four programs in 390 set KEY → loudness at all, and three of them read
+cleanly as a signed 16-bit value: +10, −6 and −5, with byte 17 holding 0xFF
+on the two negatives. The fourth, DSKA0061 <span class="mono">THE ISLAND</span>, stores 254 with
+byte 17 at 0, which reads as +254 — an order of magnitude outside the range of anything
+else in the corpus, and outside what the panel offers. A stale byte in an otherwise unused field
+is the likeliest account. It is worth flagging rather than smoothing over, because a writer that
+sets only the low byte would produce exactly this.</p>
+
+<p>The load address is the most informative field, because its <em>increments</em> are exact.
+Taking the programs on a disk in directory order, the address of each advances by</p>
+<pre>70 × (1 + keygroup_count)</pre>
+<p>in <strong>289 of 289</strong> consecutive pairs across both sticks. Two things follow. The
+value is a RAM address, not a disk offset — programs land nose to tail in the sampler's
+memory in the order the disk holds them, and the first one on a disk usually lands at 0xC5F6.
+And the header occupies <strong>70 bytes in memory</strong> though only 38 on disk: the same
+size as a keygroup. The 38-byte on-disk header is a truncation of a 70-byte record, which is
+consistent with its last ten bytes being constant zero.</p>
+
+<p class="warn"><b>A writer must maintain both the load address and the keygroup count.</b>
+They restate what the rest of the file already implies, and the sampler believes the header
+rather than recounting. Both are exact on all 100 library disks. Getting them wrong is not
+a cosmetic error:</p>
+<ul>
+<li>A <b>stale count</b> (byte 23) silently truncates the program. A disk whose first program
+had grown from four keygroups to eight still said four, and the sampler played only the first
+four — the samples in the rest of the program were simply not there.</li>
+<li>A <b>stale load address</b> (bytes 18..19) overlaps programs in RAM. On the same disk the
+second program still loaded at 0xC754, the address that was correct before the first program
+grew by four keygroups, so its records landed on top of the first program's. That crashed the
+S950 on load.</li>
+</ul>
+<p>Both follow from the arena layout of section 5: a program's load address is
+<span class="mono">arena + 70 &times; (its first record index)</span>, and its count is simply
+how many keygroup records the file holds.</p>
+
+<h3>7.2 Keygroup record anatomy</h3>
+<p>The 70 bytes divide into a header, two velocity zones of equal size, and a link:</p>
+<table>
+  <tr><th class="mono" style="width:20%">Offset</th><th style="width:14%">Size</th><th>Contents</th></tr>
+  <tr><td class="mono">0 .. 23</td><td>24</td><td>Keygroup header — key range and the amplitude envelope</td></tr>
+  <tr><td class="mono">24 .. 45</td><td>22</td><td>Velocity zone 1 — sample name and its per-sample parameters</td></tr>
+  <tr><td class="mono">46 .. 67</td><td>22</td><td>Velocity zone 2 — same layout</td></tr>
+  <tr><td class="mono">68 .. 69</td><td>2</td><td>Link to the next keygroup</td></tr>
+</table>
+<p>An unused second zone carries the placeholder name <span class="mono">2 SAMPLE</span>,
+which occurs in 87% of keygroups.</p>
+
+<h3>7.3 Keygroup header (24 bytes)</h3>
+<p>Fields marked <strong>panel</strong> were read directly off an S950 front panel and match
+the stored bytes exactly.</p>
+<table>
+  <tr><th class="mono" style="width:12%">Offset</th><th style="width:34%">Field</th><th>Notes</th></tr>
+  <tr><td class="mono">0 / 1</td><td>High key / low key</td><td>MIDI note numbers, C3 = 60</td></tr>
+  <tr><td class="mono">2</td><td>Velocity switch threshold</td>
+      <td><strong>panel</strong>. The velocity at which zone 2 takes over from zone 1.
+      The panel displays the number itself, and 128 is simply its top — unreachable,
+      since MIDI velocity stops at 127. See 7.5</td></tr>
+  <tr><td class="mono">3 .. 6</td><td>VCA attack / decay / sustain / release</td><td><strong>panel</strong>, 0..99</td></tr>
+  <tr><td class="mono">7</td><td>VEL SENS &rarr; filter</td><td><strong>panel</strong></td></tr>
+  <tr><td class="mono">8</td><td>KEY &rarr; filter</td><td><strong>panel</strong>. Default 50; reads 0 as "Off"</td></tr>
+  <tr><td class="mono">9</td><td>VEL SENS &rarr; attack</td><td><strong>panel</strong></td></tr>
+  <tr><td class="mono">10</td><td>VEL SENS &rarr; release</td>
+      <td><strong>panel</strong>. Reads −50 on DSKA0006 <span class="mono">DRUM-1</span> keygroup 4,
+      which stores 206. Signed, and spans exactly −50..+50 across the corpus; zero in all but
+      20 of 1899 keygroups, which is why it took a deliberately chosen program to see</td></tr>
+  <tr><td class="mono">11</td><td>VEL SENS &rarr; loudness</td>
+      <td><strong>panel</strong>. The byte that shifts across whole drum kits between the factory DRUM-A/B/C/D variants</td></tr>
+  <tr><td class="mono">12</td><td>WARP velocity</td><td><strong>panel</strong>, default 0 (warp off)</td></tr>
+  <tr><td class="mono">13</td><td>WARP attack offset</td><td><strong>panel</strong>, signed</td></tr>
+  <tr><td class="mono">14</td><td>WARP time</td><td><strong>panel</strong></td></tr>
+  <tr><td class="mono">15</td><td>LFO delay</td><td><strong>panel</strong></td></tr>
+  <tr><td class="mono">16</td><td>LFO rate</td><td><strong>panel</strong></td></tr>
+  <tr><td class="mono">17</td><td>LFO depth</td><td><strong>panel</strong></td></tr>
+  <tr><td class="mono">18</td><td>Flags</td>
+      <td><strong>panel</strong>. Bit 0 constant pitch (481 keygroups), bit 2 LFO desync (1652),
+      bit 3 one-shot playback (163). Bit 1 is set in one keygroup of 1908 and is unidentified;
+      bits 4 to 7 are never set</td></tr>
+  <tr><td class="mono">19</td><td>Output assignment</td>
+      <td><strong>panel</strong>. Panel value is this byte plus one, 0xFF wrapping to 0:
+      0 all, 1..8 the individual mono outputs, 9 left, 10 right. See 7.6</td></tr>
+  <tr><td class="mono">20</td><td>Reserved</td><td>Zero but for one keygroup of 1908</td></tr>
+  <tr><td class="mono">21</td><td>LFO depth &rarr; aftertouch</td>
+      <td><strong>panel</strong>. Constant 0 across all 1908 keygroups — no library
+      program uses aftertouch — so the corpus corroborates but cannot locate it</td></tr>
+  <tr><td class="mono">22</td><td>LFO depth &rarr; modwheel</td>
+      <td><strong>panel</strong>, default 50; 427 of 1908 keygroups change it</td></tr>
+  <tr><td class="mono">23</td><td>VCF envelope amount</td>
+      <td><strong>panel</strong>. Signed, and spans exactly &minus;50..+50 across all 1908 records with no outliers</td></tr>
+</table>
+
+<h3>7.4 Filter envelope (bytes 34 .. 37)</h3>
+<p>A keygroup-level setting, though it is stored inside zone 1's span:</p>
+<table>
+  <tr><th class="mono" style="width:14%">Offset</th><th style="width:32%">Field</th><th>Notes</th></tr>
+  <tr><td class="mono">34 .. 37</td><td>VCF attack / decay / sustain / release</td>
+      <td><strong>panel</strong>, 0..99. Blank (ASCII space) on 87% of disks: the S900 had no
+      filter envelope, so only S950-era programs write these bytes</td></tr>
+</table>
+<p>The matching bytes in zone 2 (56 – 59) are <strong>blank in all 168 keygroups that use a
+real second zone</strong> — never written, never differing — which is what establishes this as
+a keygroup parameter rather than a per-zone one.</p>
+
+<p>The front panel lays this page out as attack, decay, sustain, release and then
+<span class="mono">AMNT</span>, which invites the guess that the amount is stored in byte 38,
+immediately after the envelope. It is not. Across the 252 keygroups that write a filter
+envelope, bytes 38 and 39 are <b>always zero</b> — the only other value either takes is ASCII
+space, in the five records that are only partly written — whereas byte 23 carries ten distinct
+signed values spanning &minus;50 to +50, and varies exactly where one would expect it to:
+DSKA0003 <span class="mono">MIX HATS</span> pairs an envelope of 0/28/30/60 with an amount of 44,
+while <span class="mono">KICK-SN MI</span> writes 31/99/99/60 with an amount of 0. The panel's
+grouping and the file's layout are simply not the same thing: the envelope sits inside zone 1's
+span and the amount stays in the keygroup header.</p>
+
+<p>Worth noting too that 166 of those 252 write an envelope but leave the amount at zero, so the
+sampler evidently writes these bytes whenever an S950 saves the program, whether or not the
+envelope does anything.</p>
+
+<h3>7.5 Velocity zone (22 bytes)</h3>
+<p>Offsets relative to the start of the zone: add 24 for zone 1, 46 for zone 2. Unlike the
+filter envelope, these fields <em>are</em> genuinely per zone — across the 168 keygroups with a
+live second zone, the filter differs from zone 1 in 91 and loudness in 43.</p>
+<table>
+  <tr><th class="mono" style="width:14%">Offset</th><th style="width:32%">Field</th><th>Notes</th></tr>
+  <tr><td class="mono">+0 .. +9</td><td>Sample name</td><td>10 chars ASCII</td></tr>
+  <tr><td class="mono">+10 .. +13</td><td>—</td><td>Zone 1 only: the filter envelope, see 7.4</td></tr>
+  <tr><td class="mono">+14, +15</td><td>Reserved</td><td>Never written — see 7.8</td></tr>
+  <tr><td class="mono">+16, +17</td><td>Internal sample reference</td>
+      <td>Unsigned 16-bit. A given sample name always carries the same value within a disk —
+      1862 pairs over 1065 names, zero conflicts. Not a user parameter</td></tr>
+  <tr><td class="mono">+18</td><td>Fine tune</td>
+      <td><strong>panel</strong>. Unsigned 0..255, a fraction of a semitone <em>upward</em></td></tr>
+  <tr><td class="mono">+19</td><td>Transpose</td><td>Signed whole semitones, –4..+3 across the corpus</td></tr>
+  <tr><td class="mono">+20</td><td>Filter cutoff</td><td><strong>panel</strong>, 0..99, default 99 (fully open)</td></tr>
+  <tr><td class="mono">+21</td><td>Loudness</td><td><strong>panel</strong>, signed, default 0</td></tr>
+</table>
+<p>The threshold that selects between the two zones is not in the zone record at all: it is
+<strong>byte 2 of the keygroup header</strong>. DSKA0082 <span class="mono">CAR HORN</span>
+stores 115 there and the panel reads a velocity switch of 115.</p>
+<p>The corpus confirms it without ambiguity. Of the 266 keygroups that name a second sample,
+45 carry a threshold in the range 60–116. Of the 1633 that name no second sample,
+<strong>not one</strong> carries anything but 128. That is not a sentinel: the panel shows
+128 as a number like any other. It is simply the top of the range, and one above the highest
+MIDI velocity, so a keygroup left there can never reach zone 2. The remaining 221 two-sample
+keygroups
+also sit at 128, leaving zone 2 silent; on DSKA0082 that is plainly a template left over from
+copying, since four of its programs carry an unheard <span class="mono">CUCKOO</span> in
+zone 2 at the same loudness.</p>
+
+<p>Tuning is split across the pair at +18 and +19, and only one of them is signed.
+Transpose (+19) holds signed whole semitones. Fine (+18) is <strong>unsigned</strong>: the panel
+displays 128 for the byte 128, not −128. The pitch offset is therefore
+<span class="mono">transpose + fine/256</span> semitones, and a fine value can only move a note
+<em>up</em>.</p>
+<p>The corpus shows the consequence plainly. A small downward detune has to be written as a whole
+semitone down plus a large fraction back up, so at transpose −1 the fine value is
+non-zero in 206 of 211 keygroups and averages 163, whereas at transpose 0 it is zero in 1396 of
+1574 and averages 74 where set. Of the 493 non-zero fine values, 340 are multiples of 16 —
+a sixteenth of a semitone, or about 6 cents, appears to be the step most players used, though the
+panel accepts finer: DSKA0078 <span class="mono">RECORDER 1</span> reads 2.</p>
+
+<h3>7.6 Byte 19: the output assignment</h3>
+<p>The panel setting is this byte plus one, with 0xFF wrapping round to 0:</p>
+<table>
+  <tr><th style="width:22%">Stored</th><th style="width:22%">Panel</th><th>Meaning</th></tr>
+  <tr><td class="mono">0xFF</td><td class="mono">0</td><td>All — the default, 1608 of 1899 keygroups</td></tr>
+  <tr><td class="mono">0 .. 7</td><td class="mono">1 .. 8</td><td>Individual mono outputs</td></tr>
+  <tr><td class="mono">8</td><td class="mono">9</td><td>Left</td></tr>
+  <tr><td class="mono">9</td><td class="mono">10</td><td>Right</td></tr>
+</table>
+<p>Eleven panel settings, eleven stored values, every one of them present in the corpus. The
+rest of this section is the argument that led to the same answer from the disk images alone,
+before the panel confirmed it.</p>
+
+<p>Byte 19 holds 0xFF in 1608 of the 1899 keygroups. Where it does not, it takes only the ten
+values 0 to 9 — and the way those values are distributed identifies the field without any
+need for the front panel.</p>
+<p>Drum kits give each keygroup its own value: <span class="mono">TOM CYM 2</span> on DSKA0009
+runs 3, 2, 1, 0 across its four toms and 4, 5, 6 across its three cymbals, and
+<span class="mono">HIPHOP PRC</span> on DSKA0007 runs 0 to 6 across its seven percussion hits.
+That is the signature of a per-keygroup routing assignment, not of a sound parameter.</p>
+<p>The decisive case is DSKA0042. It carries <span class="mono">TUBULARBEL</span>, four keygroups
+covering notes 24–127 with byte 19 unset, and <span class="mono">TUBULAR 2</span>, which is
+the same four keygroups <em>twice</em> over identical key ranges and with identical envelopes,
+filter and loudness. The two copies differ in exactly two respects: the second is fine-tuned
++2, and its byte 19 reads 9 where the first reads 8. A detuned unison double is only worth
+making if the two halves are separated in the output — so 8 and 9 are a left/right pair.
+<span class="mono">PIZ-CHORUS</span> on DSKA0064 agrees: a pizzicato across the full keyboard on
+9, layered with a chorus sample on 8.</p>
+<p>With 8 and 9 spoken for as left and right, 0 to 7 line up with the eight individual outputs,
+and 0xFF is the unassigned default. Consistently with that reading, the two ranges do mix within
+a kit — <span class="mono">LINN 9000</span> on DSKA0023 puts four of its drums on numbered
+outputs and the remaining twenty-four on 9.</p>
+
+<h3>7.7 Corpus-wide corroboration</h3>
+<p>Fields established from the images alone, before any panel check:</p>
+<table>
+  <tr><th class="mono" style="width:14%">Offset</th><th style="width:26%">Field</th><th>Evidence</th></tr>
+  <tr><td class="mono">0</td><td>High key</td>
+      <td rowspan="2">Byte 1 &le; byte 0 in all 1908 records, no exceptions. Ranges tile
+      consecutively across the keygroups of multi-sampled programs, and each sample's own
+      tuning value always falls inside its keygroup's range</td></tr>
+  <tr><td class="mono">1</td><td>Low key</td></tr>
+  <tr><td class="mono">24 .. 33</td><td>Zone 1 sample name</td>
+      <td>1744 of 1908 match a sample in the same disk's directory; none blank or malformed,
+      the rest are valid names on other disks</td></tr>
+  <tr><td class="mono">46 .. 55</td><td>Zone 2 sample name</td>
+      <td>Same 10-byte ASCII form, exactly 22 bytes after zone 1</td></tr>
+  <tr><td class="mono">40 .. 41</td><td>Zone 1 sample reference</td>
+      <td rowspan="2">Unsigned 16-bit. A given sample name always carries the same value
+      within a disk — 1862 name/value pairs over 1065 distinct names, <strong>zero
+      conflicts</strong>. The same sample seen in another keygroup's zone 2 carries the
+      identical value. An internal address, not a user parameter</td></tr>
+  <tr><td class="mono">62 .. 63</td><td>Zone 2 sample reference</td></tr>
+  <tr><td class="mono">68 .. 69</td><td>Next keygroup</td>
+      <td>Unsigned 16-bit, and <strong>0 in the final keygroup of all 390 programs</strong>
+      without exception. Consecutive keygroups usually differ by exactly 70</td></tr>
+</table>
+
+<h3>7.8 What remains unknown</h3>
+<p>One byte of the seventy is unaccounted for: byte 20, which is 0 in all but one of the
+1908 keygroups and is treated as <em>reserved</em>. Byte 21, constant 0 throughout, turned out
+not to be reserved at all — it is the LFO depth from aftertouch, which no program in
+this library ever uses. That is a caution worth recording: a byte being constant across 202
+disks is evidence that nobody changed it, not evidence that it means nothing.</p>
+<p>The single keygroup carrying byte 20 = 1 is DSKA0013 <span class="mono">CSDS 1510</span>
+keygroup 4. It is also the one keygroup in the corpus that names a second sample, sets a
+velocity threshold for it, and yet leaves the sample reference at zero — but 101 other
+keygroups name an unresolved second sample without setting byte 20, so that is coincidence
+rather than explanation. The likeliest reading is a stray bit rather than a parameter.</p>
+<p>What is genuinely still open is not a byte but two <strong>bits</strong>, described next.</p>
+<p>Byte 18 is a flag byte, resolved from the keygroup page that follows LFO desync on the
+panel. Bit 0 is <strong>constant pitch</strong>, bit 2 <strong>LFO desync</strong>, bit 3
+<strong>one-shot playback</strong>. Only bit 1 is left, set in a single keygroup of 1908;
+bits 4 to 7 are never set.</p>
+<p>Both new bits read correctly against the corpus. DSKA0009 <span class="mono">TOM CYM 2</span>
+holds 4 across its four toms and 5 across its three cymbals — constant pitch off for the
+pitched toms and on for the cymbals. One-shot playback appears in only eleven programs, and
+every one of them is a drum kit or a sound-effects bank: <span class="mono">ROCK KIT 1</span>,
+<span class="mono">DRUMKIT 1</span> and <span class="mono">2</span>,
+<span class="mono">TELEPHONE</span>, <span class="mono">UK HUMOUR</span>,
+<span class="mono">BLOOD+GUTS</span> among them.</p>
+<p>This also corrects an earlier inference. Bit 0 had looked like a play-to-end flag because
+336 of the 350 keygroups setting it reference a one-shot <em>sample</em>. That correlation is
+real but incidental: constant pitch is what you use for percussion, and percussion samples do
+not loop. The flag that actually governs playing to the end is bit 3.</p>
+<p>Eight further bytes are accounted for as <em>reserved</em> rather than unknown: zone 1's
++14 and +15, and the whole of zone 2's +10 to +15. All eight hold 0 in every one of the 238
+keygroups an S950 wrote and ASCII space in all 1661 an S900 wrote, with no exceptions in either
+direction. They track the same six-byte block the filter envelope occupies, and were evidently
+allotted but never given a meaning.</p>
+
+<h3>7.9 Relationship to the S1000</h3>
+<p>The S1000 program format — a 150-byte header followed by 150-byte keygroups — is documented
+on the same site but <strong>does not apply</strong>: it fits none of the 391 program files
+measured here, and the S950 reverses the key-range order, putting high key before low key. Its
+parameter list nonetheless remains the best available guide to the undecoded bytes, since the
+machines are directly related. Note that the S1000 carries four velocity zones per keygroup
+where the S950 carries two.</p>
+
+<h2>8. Drum set files — layout only</h2>
+
+<p>Every disk carries one file of type <span class="mono">D</span>, named
+<span class="mono">DRUM SET</span>, and every one is exactly 262 bytes. The layout follows
+from that length and is confirmed on all 100 drum sets in the corpus:</p>
+
+<table>
+<tr><th>Offset</th><th>Size</th><th>Description</th></tr>
+<tr><td class="mono">0x00</td><td>22</td><td>Header. Byte 0 is
+ <span class="mono">0xFF</span> when the drum set is in use and 0 otherwise; the other 21
+ bytes are zero on every disk</td></tr>
+<tr><td class="mono">0x16</td><td>8 &times; 30</td><td>Eight voice records</td></tr>
+</table>
+
+<p><span class="mono">22 + 8 &times; 30 = 262</span> exactly. Within a voice record:</p>
+
+<table>
+<tr><th>Offset</th><th>Size</th><th>Format</th><th>Description</th></tr>
+<tr><td class="mono">0</td><td>2</td><td>unsigned LE</td><td>Voice number, 0..7 in order</td></tr>
+<tr><td class="mono">2</td><td>1</td><td>unsigned</td><td>MIDI note this voice answers to</td></tr>
+<tr><td class="mono">3</td><td>23</td><td>—</td><td>Voice parameters, undecoded</td></tr>
+<tr><td class="mono">26</td><td>2</td><td>unsigned LE</td><td>RAM pointer, base
+ <span class="mono">0x1040</span>, stepping 512 per voice</td></tr>
+<tr><td class="mono">28</td><td>2</td><td>unsigned LE</td><td>RAM pointer, base
+ <span class="mono">0x3040</span>, stepping 256 per voice</td></tr>
+</table>
+
+<p>The parameters are undecoded because there is almost nothing to decode them from. Across
+800 voice records in the library there are only <b>ten</b> distinct parameter blocks: 672
+records carry one default block, 96 carry a mostly-zero variant, and the remaining 32 are
+eight blocks belonging to a single drum kit duplicated across DSKA0004, 0005, 0017 and 0018 —
+the only four disks whose header byte marks the drum set as in use. Nobody who made these
+disks used the drum mode.</p>
+
+<p>That those four are a factory default rather than four real kits can be shown, not just
+assumed: the disks carry <b>5, 12, 22 and 26 samples</b> respectively, and no sample name
+appears anywhere in the 262 bytes, yet all four kits are byte-for-byte the same. A kit that
+actually addressed a disk's own samples could not be identical on a disk with five of them
+and one with twenty-six. So the library contains no curated drum kit at all — the useful
+count of examples to decode from is zero, not one.</p>
+
+<p>What that one kit does establish is the note field. Its eight voices carry notes 48, 52,
+55, 57, 59, 69, 71 and 74 — C2, E2, G2, A2, B2, A3, B3, D4 — ascending, which is a kit laid
+out across the keyboard and cannot reasonably be anything else. Everything from offset 3 to
+25 is constant within that kit apart from a handful of bytes, and with a single example there
+is no way to separate meaning from coincidence. Decoding the rest needs an S950 front panel in
+drum mode, the same method that resolved the ambiguous keygroup bytes in section 7.</p>
+
+<p>The first two bytes of each voice are <b>not</b> a reference to anything: across all 99
+disks that carry a drum set they read 0, 1, 2 &hellip; 7 without exception, so they are just
+the voice ordinal. That matters to a writer, because it means <b>nothing on a disk points at
+a program</b> — not the drum set, not the overall settings, and no address or count field
+anywhere outside a program's own header. Deleting a program therefore needs only to free its
+blocks, close the gap in the directory and rebuild the arena around one fewer program.</p>
+
+<h2>9. Cross-checks</h2>
+<p>Three fields validate against independent evidence, which is the strongest confirmation
+available short of hardware testing.</p>
+<table>
+  <tr><th style="width:22%">Field</th><th>Evidence</th></tr>
+  <tr><td>Tuning</td><td>On one disk the samples <span class="mono">CHOP G1</span>,
+      <span class="mono">CHOP C2</span>, <span class="mono">CHOP F2</span> and
+      <span class="mono">CHOP A2</span> carry 43, 48, 53 and 57 — exactly the semitone
+      intervals their names imply, with C3 = 60</td></tr>
+  <tr><td>Loop mode</td><td>Across 1110 samples only <code>O</code>, <code>L</code> and
+      <code>A</code> appear (786 / 306 / 18). No other value occurs</td></tr>
+  <tr><td>Sample rate</td><td>The 1104 samples in the library use <b>42 distinct rates</b>
+      spanning <b>11,773 to 44,329 Hz</b> — not the handful of round settings an earlier reading of
+      this field suggested. Common values are round (20000 x25, 22500 x15, 17500 x7) but plenty are
+      not (11773, 22170, 23750), so a reader must treat the field as a free 16-bit value rather than
+      an index into a table of presets. The library's range is not the machine's: the S950 itself
+      will run down to <b>7500 Hz</b>, so a writer should take that as the floor, not the lowest
+      rate a disk happens to contain</td></tr>
+</table>
+
+<h2>10. Reading a disk — summary</h2>
+<pre>1. Decode the HFE track data to 800 sectors of 1024 bytes.
+2. Order them:  LBA = (cyl * 2 + head) * 5 + (sector_id - 1).
+3. Read 64 directory entries from offset 0x000.
+4. For each entry with a non-zero first byte and a known type:
+     a. follow the allocation chain from the starting block until 0x8000;
+     b. concatenate the blocks and truncate to the length field;
+     c. parse the file header according to its type.</pre>
+
+<footer>
+Format documentation: <code>mda.smartelectronix.com/akai/akaiinfo.htm</code>.
+Section 7 and all verification figures derived from a corpus of 202 disk images.
+</footer>
+
+</body>
+</html>

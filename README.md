@@ -204,7 +204,9 @@ to match the original file **byte for byte**. All 101 do.
 | `selftest.html` | end-to-end test of the interface |
 | `serve.js` | static server, for testing or hosting |
 | `docs/tutorial.md` | the walkthrough: open a disk, change something, write it back |
-| `docs/S950-Disk-Format.pdf` | how the format works, in fourteen pages |
+| `docs/S950-Disk-Format.pdf` | how the format works, in sixteen pages |
+| `docs/S950-Disk-Format.html` | the source it is printed from |
+| `docs/format-check.js` | re-counts every figure in that document against the library |
 | `docs/shots.js` | regenerates the screenshots by driving a real browser |
 
 ## Editing
@@ -424,9 +426,28 @@ through the operating system, or restoring the button from the history, is the w
 to that check if the playback path ever comes under suspicion again.
 
 The format itself is written up in [**S950-Disk-Format.pdf**](docs/S950-Disk-Format.pdf):
-fourteen pages on the container, the MFM encoding, the directory and allocation table, the
+sixteen pages on the container, the MFM encoding, the directory and allocation table, the
 sample and program records, and the arena they share. Everything in it was worked out by
 reading the library and confirmed on hardware; this code is that document in executable
 form.
+
+It is mostly numbers taken from the corpus — *non-zero in 200 of 1110 samples*, *255 in all
+341 S900 programs* — and numbers age. `docs/format-check.js` recounts them against the
+disks:
+
+```
+node docs/format-check.js <directory of .hfe>
+```
+
+Thirty-eight claims, and a FAIL means the document has drifted rather than the disks. Mind
+the two bases it counts on: figures given *of 1899* exclude `DSKA0049`, the one image whose
+contents differ between the two sticks, and the document says so.
+
+The PDF is printed from `docs/S950-Disk-Format.html`, so corrections go in the HTML and it
+is printed again:
+
+```
+chrome --headless --no-pdf-header-footer --print-to-pdf=docs/S950-Disk-Format.pdf docs/S950-Disk-Format.html
+```
 
 
