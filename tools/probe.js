@@ -1,4 +1,4 @@
-var Akai=require("./akai.js"),fs=require("fs");
+var Akai=require("../akai.js"),fs=require("fs");
 var d=Akai.load("DSKA0000.hfe",new Uint8Array(fs.readFileSync("E:\\DSKA0000.hfe")));
 console.log("files:");
 d.entries.forEach(function(e){

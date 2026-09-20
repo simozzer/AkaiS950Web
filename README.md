@@ -28,7 +28,7 @@ Then drop `.hfe` or `.img` files anywhere on the page, or use **Open images**.
 
 Two things a `file://` page cannot have, because browsers only grant them over http or
 https: **Web MIDI**, so the MIDI input control stays greyed out, and `fetch`, which
-`selftest.html` needs to load a disk image. For either, serve the folder — any static
+`test/selftest.html` needs to load a disk image. For either, serve the folder — any static
 server will do:
 
 ```
@@ -41,7 +41,7 @@ Then open the address it prints rather than the file. The self-test wants a disk
 on, named in the query string:
 
 ```
-http://localhost:8080/selftest.html?disk=DSKA0000-bench.hfe
+http://localhost:8080/test/selftest.html?disk=DSKA0000-bench.hfe
 ```
 
 ## Layout
@@ -114,8 +114,8 @@ The format code in `akai.js` is a direct port of the C# in `..\AkaiS950List`, an
 the same standard: it is checked against the same corpus of disk images.
 
 ```
-powershell -File make-expected.ps1 E:\     # what the C# sees, as JSON
-node verify.js E:\                         # what the JavaScript sees, diffed against it
+powershell -File tools/make-expected.ps1 E:\     # what the C# sees, as JSON
+node test/verify.js E:\                         # what the JavaScript sees, diffed against it
 ```
 
 Three things are proved:
@@ -141,20 +141,20 @@ elapsed              : 13.7 s
 
 ### The UI has its own test
 
-`selftest.html` drives the real interface the way a person would — it drops a disk image on
+`test/selftest.html` drives the real interface the way a person would — it drops a disk image on
 the page, clicks through the tree, and checks that the panes actually filled in and the
 canvases actually drew. It also runs the identity round-trip a second time, in the browser.
 
 ```
 node serve.js 8099
-# then open http://localhost:8099/selftest.html?disk=test.hfe
+# then open http://localhost:8099/test/selftest.html?disk=test.hfe
 ```
 
 with a disk image copied into this folder as `test.hfe`. It reports PASS or FAIL in the page
 title, so it can be run headless:
 
 ```
-msedge --headless --dump-dom "http://localhost:8099/selftest.html?disk=test.hfe"
+msedge --headless --dump-dom "http://localhost:8099/test/selftest.html?disk=test.hfe"
 ```
 
 ## Containers
@@ -166,7 +166,7 @@ Both are read; both can be written.
   bitstream, gaps and sync marks around it are left exactly as they were.
 - **IMG** — the bare 800K sector image: 80 cylinders x 2 sides x 5 sectors x 1024 bytes,
   819,200 bytes. This is what `Disk.image` already holds, so writing it is a copy and
-  converting an HFE to it is lossless — `imgtest.js` checks that byte for byte, audio
+  converting an HFE to it is lossless — `test/imgtest.js` checks that byte for byte, audio
   included, on the whole corpus.
 
 `.img` to `.hfe` works too: with no bitstream to patch, the container is built from
@@ -178,36 +178,63 @@ where all 101 disks agree exactly: one identical 512-byte header, 25000 bytes pe
 sectors 1..5 with no skew, the first ID address mark at bit 4928 of every side, and the
 gap fill running on through the 44 bytes of padding at the end of each side's last
 256-byte chunk. Because of that, the encoder is held to reproduction rather than mere
-validity: `imgtest.js` rebuilds every disk from its sectors alone and requires the result
+validity: `test/imgtest.js` rebuilds every disk from its sectors alone and requires the result
 to match the original file **byte for byte**. All 101 do.
 
 ## Files
 
-| File | Contents |
+The root holds the app and nothing else: open `index.html` and that is the whole of it.
+Everything that checks the app, or was used to work the format out, lives beside it.
+
+| | |
 |---|---|
-| `akai.js` | the format: HFE, MFM decode and encode, filesystem, samples, programs. No DOM, no Node — the same file runs in both |
-| `app.js` | the interface: tree, canvases, editors, Web Audio |
-| `audio.js` | decoding, rate conversion, 12-bit quantising, WSOLA time stretch |
 | `index.html`, `style.css` | the page |
-| `verify.js` | Node harness that checks the port against the corpus |
-| `fsck.js` | structural checker: CRCs, chains, the arena, program headers, zone pointers |
+| `app.js` | the interface: tree, canvases, editors, Web Audio |
+| `akai.js` | the format: HFE, MFM decode and encode, filesystem, samples, programs. No DOM, no Node — the same file runs in both |
+| `audio.js` | decoding, rate conversion, 12-bit quantising, WSOLA time stretch, the loop finder |
+| `serve.js` | static server, for testing or hosting |
+
+### `test/` — what checks it
+
+| | |
+|---|---|
+| `selftest.html` | end-to-end test of the interface, in a browser |
+| `fsck.js` | structural checker for one image: CRCs, chains, the arena, program headers, zone pointers |
+| `verify.js` | checks the port against the corpus, the way the C# tool sees it |
 | `arenatest.js` | churns keygroups across the corpus, checking the arena never drifts |
 | `deltest.js` | deletes a sample from every image and checks what is left |
-| `slicetest.js` | slices a break on every image with room for it |
 | `progtest.js` | creates and deletes a program on every image, and checks the round trip |
+| `slicetest.js` | slices a break on every image with room for it |
 | `imgtest.js` | converts every image to raw `.img` and checks nothing is lost |
-| `vcftest.js` | measures the VCF - flat passband, -3 dB at cutoff, 36 dB/octave - and checks the calibrator recovers a mapping it is not given |
-| `vcfcal.js` | derives the real cutoff mapping from recordings of the hardware |
-| `makezip.ps1` | builds the downloadable source bundle |
-| `make-expected.ps1` | dumps what the C# sees, for `verify.js` to diff against |
 | `looptest.js` | the loop finder, against the loops the library shipped with |
-| `selftest.html` | end-to-end test of the interface |
-| `serve.js` | static server, for testing or hosting |
-| `docs/tutorial.md` | the walkthrough: open a disk, change something, write it back |
-| `docs/S950-Disk-Format.pdf` | how the format works, in sixteen pages |
-| `docs/S950-Disk-Format.html` | the source it is printed from |
-| `docs/format-check.js` | re-counts every figure in that document against the library |
-| `docs/shots.js` | regenerates the screenshots by driving a real browser |
+| `vcftest.js` | measures the VCF — flat passband, −3 dB at cutoff, 36 dB/octave — and checks the calibrator recovers a mapping it is not given |
+| `keycaltest.js` | checks the key-tracking calibrator recovers a fraction it is not told |
+| `miditest.js` | reads the calibration MIDI file back and checks it matches the plan |
+
+### `tools/` — what made it
+
+| | |
+|---|---|
+| `benchplan.js` | the calibration run, described once, so the disk, the MIDI file and the analysis agree |
+| `benchdisk.js` | checks — or rebuilds — the `CALIB` programme against that plan |
+| `makemidi.js` | writes the run as a Standard MIDI File |
+| `benchcal.js` | reads one take of the run and settles everything it can |
+| `emulate.js` | renders the run through the emulation, as a WAV |
+| `vcfcal.js` | derives the real cutoff mapping from recordings of the hardware |
+| `keycal.js` | what key-to-filter tracking means, measured from three notes |
+| `probe.js`, `ram.js`, `zones.js`, `repair.js` | one-off diagnostics from working the format out |
+| `makezip.ps1` | builds the downloadable source bundle |
+| `make-expected.ps1` | dumps what the C# sees, for `test/verify.js` to diff against |
+
+### `docs/` — what explains it
+
+| | |
+|---|---|
+| `tutorial.md` | the walkthrough: open a disk, change something, write it back |
+| `S950-Disk-Format.pdf` | how the format works, in sixteen pages |
+| `S950-Disk-Format.html` | the source it is printed from |
+| `format-check.js` | re-counts every figure in that document against the library |
+| `shots.js` | regenerates the screenshots by driving a real browser |
 
 ## Editing
 
@@ -291,20 +318,20 @@ It reports the **match**, −1 to 1, and says plainly what to expect of it: inau
 applause and running water have no clean loop, and the number says so rather than
 pretending. **Preview** auditions the loop before it is written.
 
-`looptest.js` measures it against the loops somebody chose by ear on the machine, using
+`test/looptest.js` measures it against the loops somebody chose by ear on the machine, using
 the same join measure for both. Across the library it averages **0.881 where the shipped
 loops average 0.793** — better on 110 samples, as good on 158, worse on 30, and those 30
 are noise where both answers score near zero.
 
 ```
-node looptest.js <directory of .hfe> [modes]
+node test/looptest.js <directory of .hfe> [modes]
 ```
 
 A note on the loop mode, which the tool now changes properly: how many 10-byte
 descriptors a sample takes in the table after the keygroup arena depends on it — a
 looping sample takes one more than a one-shot — so changing the mode moves the descriptor
 pointer of every sample after it. Writing the byte alone, which is what this did before,
-broke that chain on 95 of the 96 library disks it was tried on. `fsck.js` checks the chain
+broke that chain on 95 of the 96 library disks it was tried on. `test/fsck.js` checks the chain
 now, and `looptest.js modes` flips a mode on every disk and confirms it holds.
 
 **Add sample** reads an audio file and writes it into the selected disk. The browser decodes
@@ -340,7 +367,7 @@ that will be emptied. Three things move together, or the disk is left inconsiste
 
 Then its blocks return to the free pool and its directory slot is cleared.
 
-`deltest.js` checks this against the whole corpus: it deletes a sample from the middle of
+`test/deltest.js` checks this against the whole corpus: it deletes a sample from the middle of
 every image and verifies the disk afterwards — every other file byte-identical and still
 readable, the free count exactly right, the RAM chain unbroken, no zone left naming a missing
 sample, and the result surviving a save and reload.
@@ -365,7 +392,7 @@ Dragging an envelope corner is one step, not one per mouse move.
 ## Calibrating the emulation
 
 The filter and envelope model is measured against the machine rather than guessed at.
-Everything the measurement needs is generated from one file, `benchplan.js`, so the disk,
+Everything the measurement needs is generated from one file, `tools/benchplan.js`, so the disk,
 the MIDI file and the analysis cannot drift apart - which matters, because the analysis
 identifies each clip by its position in the run and nothing else. A keygroup set to the
 wrong filter is not an error; it is a wrong answer delivered confidently.
@@ -382,9 +409,9 @@ bit-exact in the disk image. The source spectrum, the level of each clip and any
 recording chain added all cancel, leaving only the sampler's own shaping.
 
 ```
-node benchdisk.js check DSKA0000-bench.hfe   # the disk matches the plan
-node makemidi.js                             # writes AkaiCalibration.mid
-node miditest.js                             # the MIDI file matches the plan
+node tools/benchdisk.js check DSKA0000-bench.hfe   # the disk matches the plan
+node tools/makemidi.js                            # writes tools/AkaiCalibration.mid
+node test/miditest.js                             # the MIDI file matches the plan
 ```
 
 `benchdisk.js build <in> <out>` writes the programme the plan describes, if the two ever
@@ -396,7 +423,7 @@ Load the disk, select `CALIB`, point a sequencer at the S950 on MIDI channel 1, 
 the audio output and play `AkaiCalibration.mid`. It runs for 109 seconds. Then:
 
 ```
-node benchcal.js take.wav
+node tools/benchcal.js take.wav
 ```
 
 which reports every constant the take settles, and says so plainly where a measurement
@@ -404,24 +431,24 @@ is against a stop and means nothing.
 
 ### Rendering the emulation
 
-The same run, through the model instead of the machine. `emulate.js` renders it offline
+The same run, through the model instead of the machine. `tools/emulate.js` renders it offline
 to a 32-bit float WAV - nothing quantised and nothing clipped, however loud the run is,
 since the measurements are all ratios and a clipped take would be measuring its own
 clipping.
 
 ```
-node emulate.js emulated.wav
-node benchcal.js emulated.wav
+node tools/emulate.js emulated.wav
+node tools/benchcal.js emulated.wav
 ```
 
 Run the two reports side by side and hardware and emulation differ only where the model
 is wrong. It caught a real error in the cutoff curve.
 
-What it does not check is the playback path. `emulate.js` re-implements the envelope in
+What it does not check is the playback path. `tools/emulate.js` re-implements the envelope in
 a loop of its own, so it settles the model's constants and not the thing you actually
 hear - Web Audio's scheduling, the voice handling, the release. The page used to carry a
 **Record** button for exactly that, capturing what it played over a MIDI loopback for
-`benchcal.js` to read; it was removed once the model stopped moving. Recording the page
+`tools/benchcal.js` to read; it was removed once the model stopped moving. Recording the page
 through the operating system, or restoring the button from the history, is the way back
 to that check if the playback path ever comes under suspicion again.
 

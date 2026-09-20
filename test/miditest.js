@@ -10,9 +10,11 @@
  *   node miditest.js [file.mid]
  */
 var fs = require('fs');
-var plan = require('./benchplan.js');
+var path = require('path');
+var plan = require('../tools/benchplan.js');
 
-var file = process.argv[2] || 'AkaiCalibration.mid';
+// written by tools/makemidi.js, and kept beside it
+var file = process.argv[2] || path.join(__dirname, '..', 'tools', 'AkaiCalibration.mid');
 var problems = [];
 
 function check(name, ok, detail) {

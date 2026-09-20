@@ -19,9 +19,12 @@
  * change TIMING.channel in benchplan.js and run this again.
  */
 var fs = require('fs');
+var path = require('path');
 var plan = require('./benchplan.js');
 
-var out = process.argv[2] || 'AkaiCalibration.mid';
+// beside this script rather than in whatever directory it was run from, so the file and
+// the test that reads it always agree
+var out = process.argv[2] || path.join(__dirname, 'AkaiCalibration.mid');
 
 var DIVISION = 480;                       // ticks per quarter note
 var USEC_PER_QUARTER = 500000;            // 120 bpm

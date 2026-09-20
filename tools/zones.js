@@ -1,4 +1,4 @@
-var Akai=require("./akai.js"),fs=require("fs");
+var Akai=require("../akai.js"),fs=require("fs");
 var d=Akai.load("x",new Uint8Array(fs.readFileSync("E:\\DSKA0000.hfe")));
 var samples=d.entries.filter(function(e){return e.type==="S";}).sort(function(a,b){return a.slot-b.slot;});
 console.log("samples in directory order:");

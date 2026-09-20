@@ -10,7 +10,7 @@
  */
 var fs = require('fs');
 var path = require('path');
-var Akai = require('./akai.js');
+var Akai = require('../akai.js');
 
 var dir = process.argv[2] || 'E:' + String.fromCharCode(92);
 var SECTORS = 800, SSZ = 1024;

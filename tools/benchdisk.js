@@ -17,7 +17,7 @@
  * was seeded from, and the tests do not depend on it.
  */
 var fs = require('fs');
-var Akai = require('./akai.js');
+var Akai = require('../akai.js');
 var plan = require('./benchplan.js');
 
 var args = process.argv.slice(2);

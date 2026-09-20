@@ -1,4 +1,4 @@
-var Akai=require("./akai.js"),fs=require("fs");
+var Akai=require("../akai.js"),fs=require("fs");
 var src="E:\\DSKA0000.hfe", out="C:\\Users\\simon\\AkaiS950Web\\DSKA0000-repaired.hfe";
 var d=Akai.load("DSKA0000.hfe",new Uint8Array(fs.readFileSync(src)));
 

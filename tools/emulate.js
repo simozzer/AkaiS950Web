@@ -13,8 +13,8 @@
  * browser calls, so this cannot drift away from what you hear.
  */
 var fs = require('fs');
-var Akai = require('./akai.js');
-var Audio = require('./audio.js');
+var Akai = require('../akai.js');
+var Audio = require('../audio.js');
 var plan = require('./benchplan.js');
 
 var out = process.argv[2] || 'emulated.wav';

@@ -1,4 +1,4 @@
-var Akai=require("./akai.js"),fs=require("fs");
+var Akai=require("../akai.js"),fs=require("fs");
 var d=Akai.load("x",new Uint8Array(fs.readFileSync("E:\\DSKA0000.hfe")));
 function ramSize(w){ return Math.floor((2*w+15)/16)*16; }
 

@@ -16,8 +16,8 @@
  */
 var fs = require('fs');
 var path = require('path');
-var Akai = require('./akai.js');
-var Audio = require('./audio.js');
+var Akai = require('../akai.js');
+var Audio = require('../audio.js');
 
 var dir = process.argv[2] || 'C:' + String.fromCharCode(92) + 'Users' +
           String.fromCharCode(92) + 'simon' + String.fromCharCode(92) + 'AkaiS950Images';

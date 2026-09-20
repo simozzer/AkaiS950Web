@@ -9,8 +9,8 @@
 var fs = require('fs');
 var os = require('os');
 var path = require('path');
-var Audio = require('./audio.js');
-var Akai = require('./akai.js');
+var Audio = require('../audio.js');
+var Akai = require('../akai.js');
 var W = __dirname + '/';
 
 var disk = Akai.load('x', new Uint8Array(fs.readFileSync(W + 'DSKA0000-bench.hfe')));

@@ -15,7 +15,7 @@
 var fs = require('fs');
 var cal = require('./vcfcal.js');
 var plan = require('./benchplan.js');
-var Akai = require('./akai.js');
+var Akai = require('../akai.js');
 
 var file = process.argv[2];
 var image = process.argv[3] || 'DSKA0000-bench.hfe';

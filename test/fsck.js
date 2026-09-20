@@ -7,7 +7,7 @@
  */
 var fs = require('fs');
 var path = require('path');
-var Akai = require('./akai.js');
+var Akai = require('../akai.js');
 
 var BLOCK = 1024, FAT_OFF = 0x600, FAT_END = 0x8000, DIR_OFF = 0, ENTRY = 24, DIR_ENTRIES = 64;
 

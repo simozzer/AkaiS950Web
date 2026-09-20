@@ -11,7 +11,7 @@
  *
  *   node vcftest.js
  */
-var Audio = require('./audio.js');
+var Audio = require('../audio.js');
 
 var problems = [];
 function check(name, ok, detail) {
@@ -367,7 +367,7 @@ check('every combination gives a usable gain', sane);
 // is that the silence was too perfect. Round-trip every depth against a known signal.
 var fileio2 = require('fs');
 var os2 = require('os'), path2 = require('path');
-var cal2 = require('./vcfcal.js');
+var cal2 = require('../tools/vcfcal.js');
 
 var wdir = path2.join(os2.tmpdir(), 'vcfwav_selftest');
 try { fileio2.mkdirSync(wdir); } catch (e) { /* already there */ }
@@ -442,7 +442,7 @@ probe[0] = 0.9; probe[1] = -0.9; probe[2] = 0;          // both signs and zero
 // 'fs' is already the sample rate in this file, so the module gets another name
 var fileio = require('fs');
 var os = require('os'), pathmod = require('path');
-var cal = require('./vcfcal.js');
+var cal = require('../tools/vcfcal.js');
 
 var TRUE_MIN = 180, TRUE_MAX = 16500, CRATE = 44100;
 var caldir = pathmod.join(os.tmpdir(), 'vcfcal_selftest');

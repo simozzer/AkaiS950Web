@@ -26,7 +26,7 @@
  */
 var fs = require('fs');
 var cal = require('./vcfcal.js');
-var Akai = require('./akai.js');
+var Akai = require('../akai.js');
 
 var file = process.argv[2];
 var notesArg = process.argv[3];

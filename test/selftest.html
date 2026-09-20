@@ -7,7 +7,7 @@
 </head>
 <body>
 <pre id="log">running...</pre>
-<iframe id="app" src="index.html"></iframe>
+<iframe id="app" src="../index.html"></iframe>
 
 <script>
 /*
@@ -24,7 +24,11 @@
     log(ok ? 'RESULT PASS' : 'RESULT FAIL');
   }
 
-  var url = (location.search.match(/disk=([^&]+)/) || [])[1] || 'test.hfe';
+  // The test lives in test/ and the app one level up, so a disk named in the query
+  // string is taken as relative to the repository root - where the images are kept -
+  // unless it is plainly absolute.
+  var asked = (location.search.match(/disk=([^&]+)/) || [])[1] || 'test.hfe';
+  var url = (asked.indexOf(":") >= 0 || asked.charAt(0) === "/") ? asked : "../" + asked;
   var frame = document.getElementById('app');
   var failures = 0;
 

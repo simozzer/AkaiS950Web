@@ -161,15 +161,15 @@ allow the permission when the browser asks.
 The build stamp next to the title says which version of the code is running. If it is not
 the one you expect, you are on a cached page: Ctrl+Shift+R.
 
-`selftest.html` drives the whole interface end to end in your browser and says what passed.
+`test/selftest.html` drives the whole interface end to end in your browser and says what passed.
 It needs a disk to work on, named in the query string:
 
 ```
-http://localhost:8080/selftest.html?disk=your-disk.hfe
+http://localhost:8080/test/selftest.html?disk=your-disk.hfe
 ```
 
 The Node scripts in the repository check the disk format itself against a library of real
-disks — `fsck.js` for a single image, and the rest for the operations that resize or reorder
+disks — `test/fsck.js` for a single image, and the rest for the operations that resize or reorder
 files. `README.md` lists them.
 
 And if you want to know what any of it means on the disk itself,
