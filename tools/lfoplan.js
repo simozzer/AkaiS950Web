@@ -27,15 +27,31 @@
  * ladders, because its harmonics are strong and evenly spaced, and a sine and a pulse as
  * cross-checks so that a reading which depends on the timbre shows itself as one.
  *
- * Every keygroup transposes its zone so that whatever key it lives on, the note sounds
- * at the same 250 Hz. The measurement is a ratio and would not care, but a take in which
- * every clip is the same pitch can be checked by ear in seconds.
+ * WHY EVERY CLIP IS A DIFFERENT PITCH
+ *
+ * The first version of this run transposed each zone back towards the root, so that every
+ * clip sounded at the same 250 Hz whichever key it was on. It seemed tidy. It ruined a
+ * take: the first recording came back with 25 of its 26 clips at the wrong pitch, some of
+ * them three octaves out and aliasing badly, and the only clip that played what it was
+ * asked to play was the one on the root key, whose transpose was zero.
+ *
+ * The library never asks for more than it has to: across 3816 zones the transpose spans
+ * -4 to +3, and it is zero in 3416 of them. This run was asking for -14 to +14, which is
+ * outside anything the corpus demonstrates, and the machine evidently does something
+ * drastic with it - the two clips clean enough to read were both at exactly three octaves
+ * from where the key alone would have put them, which is a sampler hitting its stop.
+ *
+ * So the transpose is zero everywhere now and every clip simply sounds at its own key's
+ * pitch. The measurement never needed them to match: a depth in cents and a rate in hertz
+ * are both ratios, and the analysis is told what each clip should sound at. The tone is
+ * 400 Hz rather than 250 so that the spread across the keys lands between 140 Hz and 540,
+ * which is high enough for the tracker to follow a fast LFO and low enough not to alias.
  */
 
 var VEL = 100;
-var TONE_HZ = 250;          // what every clip is tuned to sound at
+var TONE_HZ = 400;          // the pitch the tone is recorded at, on the root key
 var ROOT = 60;              // the pitch the tone samples are recorded at
-var FIRST_KEY = 46;         // keys run upward from here, one per keygroup
+var FIRST_KEY = 42;         // keys run upward from here, one per keygroup
 
 /*
  * Keygroup bytes, by offset. 43/44/45 sit inside zone 1's span but belong to the
@@ -71,6 +87,7 @@ var BASE = {
   18: FLAG_DESYNC,
   21: 0, 22: 0,
   23: 0,
+  43: 0,                     // no transpose: see the note at the top
   44: 99, 45: 0
 };
 
@@ -100,23 +117,23 @@ var nextKey = FIRST_KEY;
  *
  * `clip: false` builds the keygroup without giving it a clip of its own - the upper
  * voice of a desync pair is played as part of the lower voice's clip.
+ *
+ * `key` places the keygroup somewhere other than the next free key, which the desync
+ * pairs need: their two voices have to be exactly two octaves apart.
  */
 function test(spec) {
-  var key = nextKey++;
+  var key = spec.key === undefined ? nextKey++ : spec.key;
   var set = {};
   Object.keys(BASE).forEach(function (k) { set[k] = BASE[k]; });
   Object.keys(spec.set || {}).forEach(function (k) { set[k] = spec.set[k]; });
-
-  // the zone transposes back towards the root, so every clip sounds at a known pitch
-  var octaves = spec.octaves || 0;
-  set[43] = ((ROOT - key + octaves * 12) + 256) % 256;
 
   TESTS.push({
     section: spec.section, analysis: spec.analysis, label: spec.label,
     sample: spec.sample || 'SAW', key: key, velocity: VEL,
     hold: spec.hold || 0, set: set, why: spec.why, setting: spec.setting,
     cc: spec.cc || null, pairWith: spec.pairWith === undefined ? null : spec.pairWith,
-    stagger: spec.stagger || 0, sounds: TONE_HZ * Math.pow(2, octaves),
+    stagger: spec.stagger || 0,
+    sounds: TONE_HZ * Math.pow(2, (key - ROOT) / 12),
     hasClip: spec.clip !== false
   });
   return key;
@@ -241,32 +258,32 @@ test({
  * instead of sharing one across the programme - which is testable: start two notes a
  * second and a half apart and see whether their wobbles line up.
  *
- * The two notes are two octaves apart, 250 Hz and 1000 Hz. That is not for the ear: the
- * tracker isolates one tone by averaging over exactly one period of it, which puts a
- * null on every multiple of its own frequency. Two octaves up lands the second note
- * exactly on one of those nulls, so each voice can be read as though the other were not
- * there. An interval chosen for musical reasons would not.
+ * The two notes are two octaves apart, which is not for the ear: the tracker isolates one
+ * tone by averaging over exactly one period of it, and that puts a null on every multiple
+ * of its own frequency, so two octaves up lands the second voice exactly on one of them.
+ * Twenty-four keys apart gives that interval exactly, with no tuning of any kind - which
+ * is what the first version of this run used a zone transpose for, and should not have.
  *
  * This is the speculative part of the run. If the two voices turn out to be
  * indistinguishable it settles nothing, and the report says so rather than fitting a
  * number to noise.
  */
 [{ flag: 0, name: 'desync off' }, { flag: FLAG_DESYNC, name: 'desync on' }].forEach(function (v) {
-  // Two keys taken together: the lower voice is the clip and the upper rides along
-  // inside it. Both keys are claimed here rather than as they are handed out, so that
-  // the clip can name its partner before the partner exists.
-  var upper = nextKey + 1;
+  // The lower voice takes the next free key and the upper one sits two octaves above it,
+  // clear of everything else. Both keys are worked out here rather than as they are handed
+  // out, so the clip can name its partner before the partner exists.
+  var lower = nextKey++, upper = lower + 24;
 
   test({
-    section: 'desync', analysis: 'desync', label: v.name,
+    section: 'desync', analysis: 'desync', label: v.name, key: lower,
     sample: 'SINE', hold: 8, stagger: 1.5, pairWith: upper,
     set: { 16: MID_RATE, 17: 99, 18: v.flag },
     why: v.name + ': the lower of two voices, started first'
   });
 
   test({
-    section: 'desync', analysis: 'desyncpair', label: v.name + ', upper voice',
-    sample: 'SINE', octaves: 2, clip: false,
+    section: 'desync', analysis: 'desyncpair', label: v.name + ', upper voice', key: upper,
+    sample: 'SINE', clip: false,
     set: { 16: MID_RATE, 17: 99, 18: v.flag },
     why: v.name + ': the upper of two voices, two octaves up'
   });

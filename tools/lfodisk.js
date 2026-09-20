@@ -11,17 +11,17 @@
  *
  * THE TONES
  *
- * 250 Hz at 20 kHz, which makes a period exactly 80 words, and 125 periods exactly
+ * 400 Hz at 20 kHz, which makes a period exactly 50 words, and 200 periods exactly
  * 10,000 words. The loop is the whole sample, so it joins onto itself with no
  * discontinuity at all - not nearly none, none: the last word is followed by the first
  * and the waveform carries on as though nothing happened. A loop that clicked once per
  * half second would put a spike into the pitch track every time round, and the analysis
  * would read it as modulation.
  *
- *   SAW    36 harmonics. The one the ladders play: strong, evenly spaced partials.
+ *   SAW    16 harmonics. The one the ladders play: strong, evenly spaced partials.
  *   SINE   the fundamental alone. Nothing to hide behind, so a wobble in the level is
  *          plainly a wobble in the level.
- *   PULSE  a quarter-width rectangle, 36 harmonics. A different spectrum entirely,
+ *   PULSE  a quarter-width rectangle, 16 harmonics. A different spectrum entirely,
  *          played at a setting the sawtooth also plays, as a check that the reading
  *          belongs to the machine and not to the waveform.
  *
@@ -39,8 +39,9 @@ var target = args[0] || path.join(__dirname, 'LFOCAL');
 
 var PROGRAM = 'LFOCAL';
 var RATE = 20000;                     // the tones' sample rate
-var HARMONICS = 36;                   // 36 x 250 Hz = 9 kHz, clear of the 10 kHz ceiling
-var PERIODS = 125;                    // 125 periods of 80 words = 10,000 words, 0.5 s
+var HARMONICS = 16;                   // 16 x 400 Hz = 6.4 kHz; the top key plays it 1.26x
+                                      // faster, so 8.1 kHz, still clear of the 10 kHz ceiling
+var PERIODS = 200;                    // 200 periods of 50 words = 10,000 words, 0.5 s
 var PEAK = 1800;                      // of the 12-bit +-2047, leaving a little headroom
 var DUTY = 0.25;                      // the pulse width
 

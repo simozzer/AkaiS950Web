@@ -535,8 +535,8 @@ reason. The run lasts four minutes and sixteen seconds.
 ### What it plays
 
 A steady looped tone, not noise: the filter run measures a spectrum, where noise is
-ideal, and an LFO moves pitch, which noise does not have. 250 Hz at 20 kHz makes a
-period exactly 80 words and 125 periods exactly 10,000, so the loop is the whole sample
+ideal, and an LFO moves pitch, which noise does not have. 400 Hz at 20 kHz makes a
+period exactly 50 words and 200 periods exactly 10,000, so the loop is the whole sample
 and joins onto itself with no discontinuity at all — a loop that clicked twice a second
 would put a spike into the pitch track every time round and be read as modulation.
 
@@ -544,13 +544,12 @@ Three of them, band-limited by construction:
 
 | | |
 |---|---|
-| `SAW` | 36 harmonics. What the ladders play — strong, evenly spaced partials |
+| `SAW` | 16 harmonics. What the ladders play — strong, evenly spaced partials |
 | `SINE` | the fundamental alone, so a wobble in the level is plainly a wobble in the level |
 | `PULSE` | a quarter-width rectangle. A different spectrum entirely, played at a setting the sawtooth also plays |
 
-Every keygroup transposes its zone back towards the samples’ root, so whichever key a
-test lives on, the note sounds at the same 250 Hz and a take can be checked by ear in
-seconds.
+Each test sits on its own key and sounds at that key’s own pitch, 141 Hz to 599 Hz across
+the run. Nothing is transposed — see below for what happened when it was.
 
 ### What it asks
 
@@ -607,14 +606,78 @@ which prints every reading with how well it was determined beside it, draws the 
 waveform as it folded, and ends with a block to paste into `audio.js` once there is an
 LFO there for it to go in.
 
+### What the first take settled
+
+The first recording was mostly wasted, for a reason worth writing down. Every keygroup
+transposed its zone back towards the sample’s root so that all 26 clips would sound at
+the same pitch — tidy, and unnecessary, since every measurement here is a ratio. It asked
+for transposes of −14 to +14 semitones. Across the library’s 3816 zones the transpose
+spans **−4 to +3** and is zero in 3416 of them, so the run was relying on a field far
+outside anything the corpus demonstrates.
+
+The machine did something drastic with it. 25 of the 26 clips came back at the wrong
+pitch, and the two clean enough to read were both exactly **three octaves** from where
+the key alone would have put them — a sampler against its stop. The one clip that played
+what it was asked to play was the one on the root key, whose transpose was zero.
+
+Two things came out of it anyway.
+
+**The rate is linear in the byte**, which is not what was expected — the filter’s cutoff
+is exponential, so the analysis fitted this in log2 hertz and tried nothing else. The
+eight rungs fall on a straight line *in hertz* to better than a fiftieth of a hertz:
+
+```
+rate = 1.782 + 0.08930 x byte   Hz      r2 0.99998
+
+  byte   0   measured  1.788   line says  1.782
+  byte  10   measured  2.682   line says  2.675
+  byte  25   measured  3.992   line says  4.014
+  byte  40   measured  5.361   line says  5.353
+  byte  55   measured  6.678   line says  6.693
+  byte  70   measured  8.054   line says  8.032
+  byte  85   measured  9.366   line says  9.372
+  byte  99   measured 10.622   line says 10.622
+```
+
+A wobble keeps its frequency whatever pitch it sits on, which is why these survived the
+mess. And they are confirmed from outside it: the one clip that played correctly carries
+byte 60 and measured **7.152 Hz**, where the line drawn through the other eight says
+7.139. In log2 hertz the same eight points fit at r2 0.944, so the law is not the filter’s
+law. `lfocal` fits both now and lets the data choose.
+
+**And from that one good clip**, at rate 60, depth 99, delay 0:
+
+| | |
+|---|---|
+| carrier | 249.94 Hz where 250 was asked for — so the tone, the loop, the 12-bit packing and the root pitch are all right |
+| rate | 7.152 Hz, explaining 1.00 of the track over 33 cycles |
+| depth 99 | **±149 cents**, symmetric: −149.7 to +146.1 |
+| shape | **sine**, r 0.999 — not the triangle a guess would have reached for |
+| level | moved 0.22 dB, so it is vibrato and nothing else |
+
+Everything else — the depth law, the delay law, the modwheel, desync — needs the re-take.
+
+### The guard that was missing
+
+None of that was noticed by the analysis. It found *something* within its search band in
+every clip, demodulated whatever that was, and reported depths of 6270 cents with no more
+hesitation than it reports a good one. A tool that cannot tell a measurement from a
+misunderstanding is worse than no tool, because it is believed.
+
+So the report now opens with a **PITCH** section: every clip, what it was asked to sound
+at, what it did sound at, and whether its level held steady. Clips that fail are named,
+excluded from every fit, and the reader is told plainly that nothing taken from them means
+anything. `test/lfotest.js` plays a clip three octaves out to prove the guard catches it,
+and one half a semitone out to prove it does not catch that.
+
 ### Knowing it works before there is a take
 
-Nobody has recorded one, so `test/lfotest.js` builds an S950 that does not exist: a rate
-that doubles every 20 units, a depth of 0.55 cents per unit, a delay of 45 ms per unit
-and a triangle. None of those is a guess at what a real S950 does — they are numbers
-chosen to be nothing like round and nothing like each other, so a reading that comes out
-close cannot be close by luck. The tone is rendered the way the sampler renders it: the
-very words `lfodisk.js` writes to the disk, read out of a loop at a rate the LFO moves.
+`test/lfotest.js` builds an S950 that does not exist: a rate that doubles every 20 units,
+a depth of 0.55 cents per unit, a delay of 45 ms per unit and a triangle. None of those is
+a guess at what a real S950 does — they are numbers chosen to be nothing like round and
+nothing like each other, so a reading that comes out close cannot be close by luck. The
+tone is rendered the way the sampler renders it: the very words `lfodisk.js` writes to the
+disk, read out of a loop at a rate the LFO moves.
 
 It plays the whole 256-second run through that machine, writes a WAV, and hands `lfocal`
 the file and nothing else. It recovers 0.550 cents per unit, doubling every 20.0 units,

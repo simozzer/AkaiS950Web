@@ -478,6 +478,31 @@ function measure(x, rate, clip, offset, opts) {
 
   out.meanHz = t.meanHz;
   out.centsOffNominal = 1200 * Math.log2(t.meanHz / (clip.sounds || plan.TONE_HZ));
+
+  /*
+   * Did this clip play what it was asked to play?
+   *
+   * It has to be asked. The first take of this run came back with 25 of its 26 clips at
+   * the wrong pitch - some three octaves out and aliasing - and nothing here noticed: the
+   * carrier search found SOMETHING within its band every time, demodulated whatever that
+   * was, and reported depths of six thousand cents with no more hesitation than it reports
+   * a good one. A tool that cannot tell a measurement from a misunderstanding is worse
+   * than no tool, because it is believed.
+   *
+   * Two ways of being wrong, and they catch different failures. A pitch a semitone or more
+   * off nominal means the note was not the note. A level that swings wildly across the clip
+   * means whatever was demodulated was not a steady tone at all - noise, or a tone drifting
+   * in and out of the search band.
+   */
+  var dbMean = 0, dbVar = 0, q;
+  for (q = 0; q < t.db.length; q++) dbMean += t.db[q];
+  dbMean /= Math.max(t.db.length, 1);
+  for (q = 0; q < t.db.length; q++) dbVar += (t.db[q] - dbMean) * (t.db[q] - dbMean);
+  out.levelSpread = Math.sqrt(dbVar / Math.max(t.db.length, 1));
+
+  out.offPitch = Math.abs(out.centsOffNominal) > 100;
+  out.unsteady = out.levelSpread > 6;
+  out.trustworthy = !out.offPitch && !out.unsteady;
   return out;
 }
 
@@ -623,6 +648,47 @@ function analyse(file) {
   var results = { offset: on.offset, matched: rough.matched, found: found.clips.length,
                   onsetSpread: on.spread };
 
+  // ------------------------------------------------- did it play what it was asked to
+  //
+  // Before any measurement, because a clip at the wrong pitch makes every number taken
+  // from it meaningless, and the wrong pitch is not something a reader can see in a
+  // depth of 6270 cents unless they are told to look for it.
+  console.log('PITCH  (every clip, against what the plan asked for)');
+  var wrong = [];
+  results.pitch = expected.map(function (c) {
+    // A desync clip holds two voices, and the second arriving mid-clip moves the level by
+    // twenty decibels - which is not a clip going wrong, it is a clip doing what it was
+    // asked. So a paired clip is checked over the stretch before its partner joins.
+    var probe = c.pairWith === null || c.pairWith === undefined ? c
+              : { from: c.from, to: c.from + c.stagger, sounds: c.sounds, label: c.label, note: c.note };
+    var m = measure(x, rate, probe, at.offset, { skipSeconds: 0.3 });
+    if (m.error) { wrong.push({ clip: c, why: m.error }); return { clip: c, error: m.error }; }
+    if (!m.trustworthy) wrong.push({ clip: c, m: m });
+    return { clip: c, hz: m.meanHz, cents: m.centsOffNominal,
+             offPitch: m.offPitch, unsteady: m.unsteady };
+  });
+
+  if (!wrong.length) {
+    console.log('  all ' + expected.length + ' clips within a semitone of the pitch the plan asks for');
+  } else {
+    console.log('  ' + (expected.length - wrong.length) + ' of ' + expected.length +
+                ' clips played what they were asked to. These did not:');
+    wrong.forEach(function (bad) {
+      if (bad.why) { console.log('    note ' + bad.clip.note + '  ' + bad.why + '   ' + bad.clip.label); return; }
+      console.log('    note ' + String(bad.clip.note).padStart(3) + '  asked for ' +
+                  fmt(bad.clip.sounds, 1) + ' Hz, sounded at ' + fmt(bad.m.meanHz, 1) +
+                  ' (' + fmt(bad.m.centsOffNominal, 0) + ' cents off)' +
+                  (bad.m.unsteady ? ', and its level swings ' + fmt(bad.m.levelSpread, 1) + ' dB' : '') +
+                  '   ' + bad.clip.label);
+    });
+    console.log('');
+    console.log('  Nothing read from those clips means anything. Depths and shapes taken from');
+    console.log('  them are below for completeness and should be ignored; the rate may still');
+    console.log('  be right, since a wobble keeps its frequency whatever pitch it sits on.');
+  }
+  results.wrongPitch = wrong.length;
+  console.log('');
+
   // ----------------------------------------------------------- rate ladder
   console.log('RATE  (byte 16, at depth 50)');
   console.log('  setting      Hz   cycles  explains   depth');
@@ -639,16 +705,34 @@ function analyse(file) {
     return { setting: c.setting, hz: hz, ok: ok, measure: m };
   });
 
+  /*
+   * Straight in hertz, or straight in octaves?
+   *
+   * The filter's cutoff is exponential, so this was fitted in log2 hertz and nothing else
+   * was tried. The first real take settled it the other way: in hertz the eight rungs fall
+   * on a straight line to better than a fiftieth of a hertz, and in log2 hertz they plainly
+   * do not. Both are fitted now and the data is allowed to say which.
+   */
   var rateFit = line(ratePoints);
+  var rateLog = line(ratePoints.map(function (q) { return { x: q.x, y: Math.log2(q.hz) }; }));
   results.rateFit = rateFit;
-  if (rateFit) {
+  results.rateLogFit = rateLog;
+  if (rateFit && rateLog) {
+    var straight = rateFit.r2 >= rateLog.r2;
+    results.rateLaw = straight ? 'linear' : 'exponential';
     console.log('');
-    console.log('  in log2 Hz the ladder fits a straight line at r2 ' + fmt(rateFit.r2, 4) +
-                ' - doubling every ' + fmt(1 / rateFit.slope, 1) + ' units');
-    console.log('  which puts 0 at ' + fmt(Math.pow(2, rateFit.intercept), 3) +
-                ' Hz and 99 at ' + fmt(Math.pow(2, rateFit.intercept + 99 * rateFit.slope), 2) + ' Hz');
-    if (rateFit.r2 < 0.98)
-      console.log('  r2 below 0.98: the law is not a plain exponential and wants the table, not the fit');
+    console.log('  in hertz     a straight line fits at r2 ' + fmt(rateFit.r2, 5) + '  -  ' +
+                fmt(rateFit.slope, 5) + ' Hz per unit, ' + fmt(rateFit.intercept, 3) + ' Hz at 0');
+    console.log('  in log2 Hz   a straight line fits at r2 ' + fmt(rateLog.r2, 5) + '  -  ' +
+                'doubling every ' + fmt(1 / rateLog.slope, 1) + ' units');
+    console.log('  the ' + (straight ? 'hertz' : 'octave') + ' fit is the straighter, so the rate is ' +
+                (straight ? 'linear in the byte' : 'exponential in the byte') + ':');
+    console.log('    byte 0 -> ' + fmt(straight ? rateFit.intercept : Math.pow(2, rateLog.intercept), 3) +
+                ' Hz,  byte 99 -> ' +
+                fmt(straight ? rateFit.slope * 99 + rateFit.intercept
+                             : Math.pow(2, rateLog.intercept + 99 * rateLog.slope), 3) + ' Hz');
+    if (Math.max(rateFit.r2, rateLog.r2) < 0.98)
+      console.log('  neither fits well: the law is neither, and wants the table rather than a line');
   }
   console.log('');
 
@@ -661,7 +745,7 @@ function analyse(file) {
     console.log('    ' + String(c.setting).padStart(4) + '  ' + fmt(m.depthCents, 2, 9) +
                 '  ' + (m.depthFrom || '-').padEnd(15) + fmt(m.peakCents, 2, 6) +
                 '  ' + fmt(m.levelPeakDb, 2, 6) + ' dB' + '  ' + fmt(m.rate ? m.rate.hz : null, 2, 6));
-    if (c.setting > 0 && m.pitchExplains > 0.3)
+    if (c.setting > 0 && m.pitchExplains > 0.3 && m.trustworthy)
       depthPoints.push({ x: c.setting, y: m.depthCents });
     return { setting: c.setting, cents: m.depthCents, measure: m };
   });
@@ -690,7 +774,7 @@ function analyse(file) {
     if (m.track && m.rate) o = onset(m.track.cents, 0, m.track.cents.length, m.rate.hz, m.track.frameRate);
     console.log('    ' + String(c.setting).padStart(4) + '  ' + fmt(o && o.at10, 2, 8) + 's' +
                 '  ' + fmt(o && o.at50, 2, 8) + 's' + '  ' + fmt(m.depthCents, 1, 8));
-    if (o && o.at50 !== null) delayPoints.push({ x: c.setting, y: o.at50 });
+    if (o && o.at50 !== null && m.trustworthy) delayPoints.push({ x: c.setting, y: o.at50 });
     return { setting: c.setting, at50: o && o.at50, at10: o && o.at10, measure: m };
   });
 
@@ -889,10 +973,15 @@ function analyse(file) {
   console.log('for audio.js, once there is an LFO for it to go in:');
   console.log('');
   console.log('  var LFO = {');
-  if (rateFit) {
+  if (rateFit && rateLog && results.rateLaw === 'linear') {
+    console.log('    // measured: ' + ratePoints.length + ' rungs on a straight line in hertz, r2 ' +
+                fmt(rateFit.r2, 5));
+    console.log('    RATE_HZ_AT_ZERO: ' + rateFit.intercept.toFixed(3) + ',');
+    console.log('    RATE_HZ_PER_UNIT: ' + rateFit.slope.toFixed(5) + ',');
+  } else if (rateFit) {
     console.log('    // measured: ' + ratePoints.length + ' of the ladder settled, r2 ' + fmt(rateFit.r2, 4));
-    console.log('    RATE_CURVE: [' + ratePoints.map(function (p) {
-      return '[' + p.setting + ', ' + p.hz.toFixed(3) + ']';
+    console.log('    RATE_CURVE: [' + ratePoints.map(function (q) {
+      return '[' + q.setting + ', ' + q.hz.toFixed(3) + ']';
     }).join(', ') + '],');
   } else {
     console.log('    // the rate ladder did not settle - nothing to write');

@@ -128,23 +128,42 @@ wantKgs.forEach(function (spec, i) {
 check('  and every LFO setting the plan asked for', wrong.length === 0,
       wrong.length ? wrong.slice(0, 3).join('; ') : wantKgs.length + ' keygroups');
 
-// Every keygroup is meant to sound at 250 Hz whichever key it sits on - that is the
-// zone transpose's whole job - except the two upper voices of the desync pairs, which
-// are put two octaves up so the tracker can separate them from their partners.
-var pitches = {};
+// No keygroup transposes anything. The first take of this run was ruined by asking for
+// transposes of up to fourteen semitones - four times anything the library uses - so the
+// pitch of a clip is now simply the pitch of its key, and the plan says what that is.
+var transposed = parsed.filter(function (kg) { return kg.zone1.transpose !== 0; });
+check('  with nothing transposed', transposed.length === 0,
+      transposed.length ? transposed.length + ' zones carry a transpose' : 'all 0');
+
+var mispitched = [];
 parsed.forEach(function (kg) {
   var smp = reloaded.entries.filter(function (e) {
     return e.type === 'S' && e.name.trim() === kg.zone1.name.trim();
   })[0];
-  var semis = kg.lowKey - smp.nominalPitch + kg.zone1.transpose;
-  var hz = Math.round(plan.TONE_HZ * Math.pow(2, semis / 12));
-  pitches[hz] = (pitches[hz] || 0) + 1;
+  var hz = plan.TONE_HZ * Math.pow(2, (kg.lowKey - smp.nominalPitch + kg.zone1.transpose) / 12);
+  var spec = plan.TESTS.filter(function (t) { return t.key === kg.lowKey; })[0];
+  if (Math.abs(1200 * Math.log2(hz / spec.sounds)) > 0.5)
+    mispitched.push('key ' + kg.lowKey + ' would sound ' + hz.toFixed(1) +
+                    ', the plan says ' + spec.sounds.toFixed(1));
 });
-check('  so that every keygroup sounds at the pitch the plan says',
-      pitches[plan.TONE_HZ] === parsed.length - 2 && pitches[plan.TONE_HZ * 4] === 2,
-      Object.keys(pitches).sort(function (a, b) { return a - b; }).map(function (hz) {
-        return pitches[hz] + ' at ' + hz + ' Hz';
-      }).join(', '));
+check('  and every keygroup sounds at the pitch the plan tells the analysis to expect',
+      mispitched.length === 0,
+      mispitched.length ? mispitched.slice(0, 2).join('; ')
+                        : parsed.length + ' keygroups, ' +
+                          Math.min.apply(null, plan.TESTS.map(function (t) { return t.sounds; })).toFixed(0) +
+                          ' to ' +
+                          Math.max.apply(null, plan.TESTS.map(function (t) { return t.sounds; })).toFixed(0) + ' Hz');
+
+// the desync pairs have to be exactly two octaves apart, or the tracker cannot put a
+// null on one while reading the other
+var pairs = plan.clips().filter(function (c) { return c.pairWith !== null; });
+var ratios = pairs.map(function (c) {
+  var up = plan.TESTS.filter(function (t) { return t.key === c.pairWith; })[0];
+  return up.sounds / c.sounds;
+});
+check('  with the desync pairs exactly two octaves apart',
+      ratios.length === 2 && ratios.every(function (r) { return Math.abs(r - 4) < 1e-9; }),
+      ratios.map(function (r) { return r.toFixed(4); }).join(' and '));
 
 /* --- the pieces, one at a time --------------------------------------------- */
 
@@ -226,16 +245,18 @@ console.log('the delay:');
 console.log('');
 console.log('two voices in one recording:');
 
-// the desync clip: 250 Hz and 1000 Hz together, the second a quarter cycle behind
+// the desync clip: the tone and two octaves above it together, the second a quarter
+// cycle behind
 var lower = play(TONES.SINE, lfodisk.RATE, 6, 1, { hz: 3.2, cents: 54, phase: 0 });
 var upper = play(TONES.SINE, lfodisk.RATE, 6, 4, { hz: 3.2, cents: 54, phase: 0.25 });
 var both = new Float64Array(lower.length);
 for (var i = 0; i < both.length; i++) both[i] = (lower[i] + upper[i]) / 2;
 
-var tl = lfocal.demodulate(both, OUT_RATE, 0, both.length, 250, 250);
-var tu = lfocal.demodulate(both, OUT_RATE, 0, both.length, 1000, 250);
-check('the lower voice is found alone', near(tl.carrier, 250, 2), tl.carrier.toFixed(1) + ' Hz');
-check('the upper voice is found alone', near(tu.carrier, 1000, 4), tu.carrier.toFixed(1) + ' Hz');
+var LO = plan.TONE_HZ, HI = plan.TONE_HZ * 4;
+var tl = lfocal.demodulate(both, OUT_RATE, 0, both.length, LO, LO);
+var tu = lfocal.demodulate(both, OUT_RATE, 0, both.length, HI, LO);
+check('the lower voice is found alone', near(tl.carrier, LO, 3), tl.carrier.toFixed(1) + ' Hz');
+check('the upper voice is found alone', near(tu.carrier, HI, 6), tu.carrier.toFixed(1) + ' Hz');
 
 var rl = lfocal.findRate(tl.cents, 0, tl.cents.length, tl.frameRate);
 var bl = lfocal.bin(tl.cents, rl.from, rl.to, rl.hz, tl.frameRate);
@@ -370,7 +391,10 @@ run.clips.forEach(function (c) {
     });
   }
 
-  put(c.from + START, play(TONES[c.sample], lfodisk.RATE, c.hold, 1, mod));
+  // each clip sounds at its own key's pitch now, which is what the sampler does with a
+  // zone that transposes nothing
+  put(c.from + START, play(TONES[c.sample], lfodisk.RATE, c.hold,
+                           c.sounds / plan.TONE_HZ, mod));
 
   if (c.pairWith !== null && c.pairWith !== undefined) {
     var pk = plan.TESTS.filter(function (t) { return t.key === c.pairWith; })[0];
@@ -378,7 +402,7 @@ run.clips.forEach(function (c) {
     // already in progress; desync on gives the voice its own, starting at zero
     var shared = (pk.set[18] & plan.FLAG_DESYNC) === 0;
     put(c.from + START + c.stagger,
-        play(TONES[pk.sample], lfodisk.RATE, c.hold, 4,
+        play(TONES[pk.sample], lfodisk.RATE, c.hold, pk.sounds / plan.TONE_HZ,
              { hz: mod.hz, cents: mod.cents,
                phase: shared ? (c.stagger * mod.hz) % 1 : 0 }));
   }
@@ -398,6 +422,28 @@ check('the run was placed against the plan', r && near(r.offset, START, 0.1),
       r ? 'offset ' + r.offset.toFixed(2) + 's, wanted ' + START : '-');
 check('  and every clip matched where it should be', r && r.matched === run.clips.length,
       r ? r.matched + ' of ' + run.clips.length : '-');
+
+// The guard the first real take showed was missing.
+check('  and every clip played the pitch it was asked for', r && r.wrongPitch === 0,
+      r ? r.wrongPitch + ' clips off pitch' : '-');
+
+// A check that cannot fail is not a check. This is what the first take actually looked
+// like: a tone three octaves from where it was asked to be, which the analysis used to
+// swallow whole and report a depth for.
+var wrongPitch = play(TONES.SAW, lfodisk.RATE, 5, 8, { hz: 3.2, cents: 30 });
+var mw2 = lfocal.measure(wrongPitch, OUT_RATE,
+                         { from: 0, to: 5, sounds: plan.TONE_HZ, label: 'three octaves up' }, 0);
+check('  and a clip three octaves off is refused rather than measured',
+      !mw2.trustworthy,
+      'off pitch ' + mw2.offPitch + ', unsteady ' + mw2.unsteady +
+      ', read ' + mw2.meanHz.toFixed(0) + ' Hz where ' + plan.TONE_HZ + ' was asked for');
+
+// and one that is merely mistuned, not lost - a quarter tone out is still the right note
+var slightlyOff = play(TONES.SAW, lfodisk.RATE, 5, Math.pow(2, 0.5 / 12), { hz: 3.2, cents: 30 });
+var ms2 = lfocal.measure(slightlyOff, OUT_RATE,
+                         { from: 0, to: 5, sounds: plan.TONE_HZ, label: 'half a semitone up' }, 0);
+check('  while half a semitone out is still accepted', ms2.trustworthy,
+      ms2.centsOffNominal.toFixed(0) + ' cents off, depth ' + ms2.depthCents.toFixed(1));
 
 var rateBad = (r.rate || []).filter(function (p) {
   return !p.ok || !near(p.hz, MACHINE.rateHz(p.setting), MACHINE.rateHz(p.setting) * 0.04);
