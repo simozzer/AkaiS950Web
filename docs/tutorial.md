@@ -135,6 +135,9 @@ silence.
 If the sample loops, the cut stops at the loop end rather than reaching into the loop, and
 the confirmation tells you when that happened.
 
+There is no way to select a region of the waveform and delete it — the trim is the whole of
+it. If you need to cut something out of the middle, that is not here yet.
+
 ## 7. Add your own sample
 
 **Add sample** reads any audio file your browser can decode — WAV, MP3, FLAC, AAC, Ogg — and

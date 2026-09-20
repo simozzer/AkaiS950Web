@@ -112,7 +112,7 @@ function zonesOf(disk) {
 /**
  * Everything about this disk that is not as the format says it should be.
  *
- * Returned as a list rather than a verdict, because nine of the library's own disks
+ * Returned as a list rather than a verdict, because seven of the library's own disks
  * already have a loop descriptor pointer that does not follow the one before it - see
  * fsck, which reports them as worth knowing rather than as damage. A test that asked
  * "is this disk perfect?" after an edit would blame the edit for them. The question is

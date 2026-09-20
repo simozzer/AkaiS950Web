@@ -389,10 +389,22 @@ otherwise.
 
 The end is the delicate one, because the tail of a sample is where a loop lives. A cut that
 reached into a loop would leave the sampler looping over audio that is no longer there, so
-the cut **stops at the loop end** and the confirmation says when it did. `test/trimtest.js`
-checks that on made-up samples where the answer is known, and then on every looped sample in
-the library: 60 of the 324 have silence to trim, 7 of those have the cut held back by their
-loop, and none is ever cut into.
+the cut **stops at the loop end** and the confirmation says when it did.
+
+Shortening a file also moves what comes after it. Samples sit back to back in the sampler’s
+RAM in directory order, and their loop descriptors sit in one table the same way, so a trim
+moves every sample after the one trimmed. The **zone pointers do not move**: those encode a
+sample’s position in directory order, and a trim changes no order at all.
+
+`test/trimtest.js` checks all of it — first on made-up samples where the answer is known to
+the word, then by trimming for real across the library. 81 of the 101 disks have something
+to trim, 67 of those move the samples that follow them in RAM, and all 81 come through with
+the RAM chain, the descriptor chain, the directory and every zone pointer intact, saved and
+reloaded.
+
+It compares before with after rather than asking whether a disk is perfect: seven of the
+disks it touches already have a loop descriptor pointer that does not follow the one before
+it, and a test that ignored that would blame the trim for them.
 
 **Programs** get their own panel: MIDI program, key to loudness, positional crossfade, and
 rename.
