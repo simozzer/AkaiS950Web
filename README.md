@@ -17,6 +17,19 @@ the editor beside them, and the waveform is docked along the bottom.
 **New here? [Start with the tutorial](docs/tutorial.md)** — open a disk, change something,
 and write it back.
 
+## Where it lives
+
+| | |
+|---|---|
+| **<https://simozzer.github.io/AkaiS950Web/>** | published from this repository by `.github/workflows/pages.yml` on every push to `main` |
+| <https://games-compendium.pages.dev/web/Akais950Studio/> | the original home, still running |
+
+The two are the same application. The Pages one is built from whatever is on `main`, so
+it cannot fall behind the source; the Cloudflare one is copied there by hand and is kept
+because people have bookmarked it.
+
+Web MIDI is granted per site, so the permission has to be given once on each.
+
 ## Running it
 
 Open `index.html`. That is all — it is deliberately written as plain scripts rather than ES
@@ -233,6 +246,12 @@ Everything that checks the app, or was used to work the format out, lives beside
 | `probe.js`, `ram.js`, `zones.js`, `repair.js` | one-off diagnostics from working the format out |
 | `makezip.js` | builds the downloadable bundle — the page and what it loads, read out of `index.html` rather than listed by hand |
 | `make-expected.ps1` | dumps what the C# sees, for `test/verify.js` to diff against |
+
+### `.github/workflows/` — what publishes it
+
+| | |
+|---|---|
+| `pages.yml` | runs the three tests that need nothing but the repo, builds the source bundle, and publishes the app to GitHub Pages |
 
 ### `docs/` — what explains it
 

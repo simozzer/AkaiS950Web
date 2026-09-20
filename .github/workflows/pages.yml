@@ -1,0 +1,76 @@
+# Publish the app to GitHub Pages on every push to main.
+#
+# The repo root already IS the app - index.html and the three scripts it loads - so there
+# is nothing to build except the source bundle that the "Download source" button serves.
+# That bundle is derived from index.html by tools/makezip.js and deliberately kept out of
+# the repo, so it is made here instead of committed.
+#
+# The site is assembled explicitly rather than by publishing the whole checkout. Partly to
+# keep .git and the test corpus out of it, and partly because a list of what the site
+# consists of is worth having written down somewhere.
+#
+# One manual step, once: Settings -> Pages -> Source -> GitHub Actions.
+
+name: Pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Let a running deploy finish rather than cancelling it - a half-published site is worse
+# than a slightly stale one.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      # The three tests that need nothing but the repo. The others read the disk library,
+      # which is 101 images of someone else's audio and is not here - they skip themselves
+      # when it is missing, so running them would prove nothing.
+      - name: Check before publishing
+        run: |
+          node test/newdisk.js
+          node test/miditest.js
+          node test/lfotest.js
+
+      - name: Build the source bundle
+        run: node tools/makezip.js
+
+      - name: Assemble the site
+        run: |
+          mkdir -p _site
+          cp index.html style.css akai.js audio.js app.js serve.js README.md _site/
+          cp AkaiS950Web.zip _site/
+          cp -r docs _site/docs
+          touch _site/.nojekyll
+          ls -la _site
+
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
