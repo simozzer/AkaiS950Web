@@ -60,7 +60,12 @@ jobs:
           touch _site/.nojekyll
           ls -la _site
 
+      # enablement asks GitHub to turn Pages on if it is off, which saves the one manual
+      # trip to Settings. The first run of this workflow failed here for exactly that
+      # reason - everything built, and there was nowhere to put it.
       - uses: actions/configure-pages@v5
+        with:
+          enablement: true
       - uses: actions/upload-pages-artifact@v3
         with:
           path: _site
