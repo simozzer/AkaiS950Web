@@ -360,9 +360,11 @@
       <label for="lpEnd">Loop ends at</label>
       <div class="pair">
         <select id="lpEnd">
+          <option value="sustain">where the sustain ends</option>
           <option value="sample">the end of the sample</option>
           <option value="current">the end marker it has now</option>
         </select>
+        <span class="unit" id="lpEndAt"></span>
       </div>
 
       <label for="lpMode">Loop mode</label>
@@ -374,7 +376,9 @@
       </div>
     </div>
 
-    <canvas id="lpWave" height="120"></canvas>
+    <canvas id="lpWave" height="120" title="Click to put the loop end where you want it"></canvas>
+    <p class="unit" id="lpHint">Click the waveform to move the loop end. The loop is found
+      backwards from there, so a sample with a release wants its end before the tail.</p>
     <p id="lpSummary" class="summary"></p>
 
     <menu>

@@ -335,6 +335,10 @@ dialog menu .spacer { flex: 1; }
 
 #slSens { width: 180px; vertical-align: middle; }
 
+/* the loop-end choices are sentences, not words, so the control has to fit them */
+#lpEnd { min-width: 215px; }
+#lpHint { margin: 0 0 4px; line-height: 1.35; }
+
 /* the loop dialog draws the tail of the sample, so the join can be seen as well as heard */
 #lpWave {
   display: block;

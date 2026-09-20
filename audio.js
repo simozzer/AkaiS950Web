@@ -163,6 +163,43 @@ var AkaiAudio = (function () {
   }
 
   /**
+   * Where the sustain gives way to the release.
+   *
+   * A sample meant to be held has a tail after its loop - the release you hear when the
+   * key comes up - and looping to the end of the sample plays across it. The level is
+   * what marks it: a short-time RMS envelope holds a plateau through the sustain and
+   * then falls away, so the last frame within `dropDb` of the loudest is where the note
+   * stops being held.
+   *
+   * What this is NOT is the loop end somebody would choose. Of the library's 324 looped
+   * samples only 30 stop short by more than 50 ms, and on those this lands about 200 ms
+   * later than the person did, at every threshold tried - they left a margin so the loop
+   * would not eat into the release. So this is offered as a starting point for the eye
+   * and the ear, not as an answer: the dialog lets the end be moved.
+   */
+  function sustainEnd(words, rate, opts) {
+    opts = opts || {};
+    var dropDb = opts.dropDb === undefined ? -2 : opts.dropDb;
+    var hop = Math.max(64, Math.round(rate * (opts.hopMs || 10) / 1000));
+    var frames = Math.floor(words.length / hop);
+    if (frames < 8) return words.length;
+
+    var rms = new Float64Array(frames), loudest = 0;
+    for (var f = 0; f < frames; f++) {
+      var sum = 0, at = f * hop;
+      for (var i = 0; i < hop; i++) { var v = words[at + i]; sum += v * v; }
+      rms[f] = Math.sqrt(sum / hop);
+      if (rms[f] > loudest) loudest = rms[f];
+    }
+    if (loudest <= 0) return words.length;
+
+    var floor = loudest * Math.pow(10, dropDb / 20);
+    for (var g = frames - 1; g >= 0; g--)
+      if (rms[g] >= floor) return Math.min(words.length, (g + 1) * hop);
+    return words.length;
+  }
+
+  /**
    * Where a sample can loop.
    *
    * The S950 holds a loop as an end point and a length and plays end-length .. end over
@@ -675,7 +712,8 @@ var AkaiAudio = (function () {
     halveRate: halveRate,
     resample: resample,
     timeStretch: timeStretch,
-    findLoop: findLoop
+    findLoop: findLoop,
+    sustainEnd: sustainEnd
   };
 })();
 

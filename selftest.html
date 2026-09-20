@@ -489,6 +489,25 @@
                 text.split(String.fromCharCode(10))[0]);
           check('setting it is offered', doc.getElementById('lpGo').disabled === false);
 
+          // The loop end is a choice, not the end of the sample: a held note has a
+          // release after its loop, and clicking the waveform is how that is said.
+          var end = doc.getElementById('lpEnd');
+          check('the loop end can be chosen', !!end && end.options.length >= 3,
+                end ? end.options.length + ' ways to set it' : 'missing');
+
+          var wave = doc.getElementById('lpWave');
+          var box = wave.getBoundingClientRect();
+          var was = text;
+          wave.dispatchEvent(new win.MouseEvent('click', { bubbles: true,
+            clientX: box.left + box.width * 0.6, clientY: box.top + box.height / 2 }));
+
+          var moved = doc.getElementById('lpSummary').textContent;
+          check('clicking the waveform moves the end', moved !== was,
+                (doc.getElementById('lpEndAt').textContent || '').slice(0, 60));
+          check('and the loop is found back from there',
+                /Loop [\d,]+ - [\d,]+/.test(moved),
+                moved.split(String.fromCharCode(10))[0]);
+
           doc.getElementById('lpGo').click();
           setTimeout(function () {
             check('the dialog closes', dlg.open === false);

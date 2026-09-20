@@ -2309,24 +2309,46 @@
     var words = d.sampleWords12(e);
     if (words.length < 512) { say(e.name.trim() + ' is too short to loop.'); return; }
 
-    loopState = { disk: d, entry: e, words: words, found: null };
+    loopState = { disk: d, entry: e, words: words, found: null, picked: -1 };
     $('lpSource').textContent = e.name.trim() + '  -  ' + fmt(e.sampleCount) + ' words at ' +
       fmt(e.sampleRate) + ' Hz, ' + (e.sampleCount / e.sampleRate).toFixed(2) + 's';
 
+    // Where the note stops being held. A sample with a release wants its loop to end
+    // before the tail, and the library is full of them - looping to the end of the
+    // sample would play the release round and round and leave none of it to hear.
+    loopState.sustain = AkaiAudio.sustainEnd(words, e.sampleRate);
+
     var hasEnd = e.loopEnd > 0 && e.loopEnd < e.sampleCount;
-    $('lpEnd').options[1].disabled = !hasEnd;
-    $('lpEnd').value = hasEnd ? 'current' : 'sample';
+
+    // Worth starting from only when the note is held and then released. On a
+    // plucked or struck sample the level falls from the attack onwards, so the
+    // sustain "ends" almost immediately and there would be nothing left to loop:
+    // that wants the whole sample, and the end moved by hand if at all.
+    var hasTail = words.length - loopState.sustain > e.sampleRate * 0.05;
+    var roomToLoop = loopState.sustain > words.length * 0.4;
+    $('lpEnd').options[2].disabled = !hasEnd;
+    $('lpEnd').value = hasEnd ? 'current'
+                    : (hasTail && roomToLoop) ? 'sustain' : 'sample';
     $('lpMode').value = e.loopMode === 'A' ? 'A' : 'L';
 
     $('loopDlg').showModal();
     refreshLoop();
   }
 
+  /** The loop end the dialog is working to: whatever was clicked, else the choice. */
+  function loopEndNow() {
+    var e = loopState.entry, words = loopState.words;
+    if (loopState.picked > 0) return loopState.picked;
+    var how = $('lpEnd').value;
+    if (how === 'current' && e.loopEnd > 0) return Math.min(e.loopEnd, words.length);
+    if (how === 'sustain') return loopState.sustain;
+    return words.length;
+  }
+
   function refreshLoop() {
     if (!loopState) return;
     var e = loopState.entry, words = loopState.words;
-    var end = $('lpEnd').value === 'current' && e.loopEnd > 0
-      ? Math.min(e.loopEnd, words.length) : words.length;
+    var end = clamp(loopEndNow(), 2, words.length);
     end -= end % 2;
 
     var ms = clamp(parseInt($('lpMin').value, 10) || 40, 2, 5000);
@@ -2336,12 +2358,18 @@
     loopState.found = got;
     loopState.end = end;
 
+    $('lpEndAt').textContent = 'word ' + fmt(end) + '  (' +
+      (end / e.sampleRate).toFixed(3) + ' s' +
+      (words.length - end > 1 ? ', leaving ' +
+        ((words.length - end) / e.sampleRate).toFixed(3) + ' s of tail' : ', the whole sample') + ')';
+
     drawLoopPreview();
 
     var box = $('lpSummary');
     if (!got) {
-      box.textContent = 'No loop fits: the shortest loop asked for is longer than the' +
-        ' part of the sample being searched.';
+      box.textContent = 'No loop fits before ' + fmt(loopState.end) + ': the shortest loop' +
+        ' asked for is longer than the part being searched. Ask for a shorter one, or' +
+        ' click further along the waveform.';
       box.classList.add('bad');
       $('lpGo').disabled = true;
       $('lpPreview').disabled = true;
@@ -2407,10 +2435,27 @@
     });
   }
 
-  ['lpMin', 'lpEnd', 'lpMode'].forEach(function (id) {
+  ['lpMin', 'lpMode'].forEach(function (id) {
     var el = $(id);
     if (el) { el.onchange = refreshLoop; }
   });
+
+  // choosing how the end is decided drops whatever was clicked before
+  if ($('lpEnd')) $('lpEnd').onchange = function () {
+    if (loopState) loopState.picked = -1;
+    refreshLoop();
+  };
+
+  // Clicking the waveform puts the end where the pointer is. The loop is found
+  // backwards from there, so this is how a release gets left alone.
+  if ($('lpWave')) $('lpWave').onclick = function (ev) {
+    if (!loopState) return;
+    var box = this.getBoundingClientRect();
+    var at = Math.round((ev.clientX - box.left) / box.width * loopState.words.length);
+    at -= at % 2;
+    loopState.picked = clamp(at, 64, loopState.words.length);
+    refreshLoop();
+  };
 
   if ($('lpPreview')) $('lpPreview').onclick = function () {
     if (!loopState || !loopState.found) return;

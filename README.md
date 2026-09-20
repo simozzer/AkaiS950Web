@@ -227,9 +227,32 @@ the only thing to find is how far back it restarts.
 end back to that point, so what it looks for is the point whose approach matches the
 approach to the end — a normalised cross-correlation, coarse over a properly decimated
 copy and then exact around the best few candidates, kept apart so a short clean loop
-cannot hide under a long mediocre one. Two things it cannot know are asked for: how short
-a loop is still musical, and whether the loop runs to the end of the sample or to the end
-marker the sample already carries.
+cannot hide under a long mediocre one.
+
+### The loop end is a choice
+
+A loop does not have to run to the end of the sample, and assuming it did was wrong.
+`BOWEDBASS` on disk 51 is the case that shows it: every one of its nine samples loops
+**before** the end, leaving between 0.12 and 0.48 s of tail — the release you hear when
+the key comes up. Loop to the end of the sample and that release is played round and
+round, and there is none of it left to hear.
+
+So the end is offered three ways — **where the sustain ends**, **the end of the sample**,
+and **the end marker it has now** — and the waveform is clickable: put the end where you
+want it and the loop is found backwards from there.
+
+The sustain end is a starting point, and honestly only that. It is the last frame of a
+short-time RMS envelope within 2 dB of the loudest, which finds the knee where a held
+note starts to let go. Of the library's 324 looped samples only 30 stop short by more
+than 50 ms, and on those this lands about **200 ms later** than the person did, at every
+threshold tried: they left a margin so the loop would not eat into the release. That is a
+musical judgement, not an acoustic edge, so the tool marks the knee and leaves the
+judgement to whoever is listening. It is not offered at all on a sample whose level falls
+from the attack onwards — a plucked or struck note has no sustain to end, and taking the
+knee there would leave nothing to loop.
+
+The other thing the finder cannot know is asked for too: how short a loop is still
+musical.
 
 It reports the **match**, −1 to 1, and says plainly what to expect of it: inaudible above
 0.95, audible below about 0.8, and hopeless on material with no repeating part in it —
