@@ -82,6 +82,7 @@ under the envelopes it modulates. **Both zones and the flags** make the third co
   which the WinForms version cannot do
 - Adds samples from any audio file the browser can decode, converted to Akai 12-bit
 - Slices a break into one-shots on detected onsets, mapping them to consecutive keys
+- **New image** starts an empty 800K disk, to fill and download
 - Creates and deletes programs, adds and removes keygroups, renames and deletes samples
 - Stretches a sample to a new tempo, halves its rate, trims leading silence
 - Finds a loop in a sustained sample, and says how clean the join is
@@ -207,6 +208,7 @@ Everything that checks the app, or was used to work the format out, lives beside
 | `slicetest.js` | slices a break on every image with room for it |
 | `imgtest.js` | converts every image to raw `.img` and checks nothing is lost |
 | `looptest.js` | the loop finder, against the loops the library shipped with |
+| `newdisk.js` | builds a disk from nothing, fills it and writes it both ways — the one test that needs no images |
 | `vcftest.js` | measures the VCF — flat passband, −3 dB at cutoff, 36 dB/octave — and checks the calibrator recovers a mapping it is not given |
 | `keycaltest.js` | checks the key-tracking calibrator recovers a fraction it is not told |
 | `miditest.js` | reads the calibration MIDI file back and checks it matches the plan |
@@ -235,6 +237,31 @@ Everything that checks the app, or was used to work the format out, lives beside
 | `S950-Disk-Format.html` | the source it is printed from |
 | `format-check.js` | re-counts every figure in that document against the library |
 | `shots.js` | regenerates the screenshots by driving a real browser |
+
+## Starting a disk from nothing
+
+**New image** makes an empty 800K disk in the page. Fill it like any other and press
+**Download image**.
+
+An empty disk really is 800 blocks of zeros. The only structures in the reserved blocks
+are the directory and the allocation table, and both are empty when zero: across all 101
+library disks the 960 bytes after the table are zero, so there is no boot record, label or
+signature to reproduce.
+
+What it does not write are the `OVERALL SE` and `DRUM SET` files that 99 of the 101 carry.
+Those hold settings rather than structure — and the overall file opens with a sample name,
+which a disk with no samples cannot honour. Two library disks have neither and read
+perfectly, which is the evidence that their absence is allowed; the sampler writes its own
+when you save settings on it.
+
+`test/newdisk.js` builds one, fills it, writes it as both containers and reads each back,
+checking the directory has no holes, the zone pointer is the sample position, the program
+header restates its own layout, and the audio survives the round trip byte for byte.
+
+**What is not proven:** a disk made this way has never been put in front of a real S950.
+Everything it contains follows rules confirmed on hardware, and `fsck.js` finds nothing
+wrong with it, but that is not the same as a machine loading it. Try one before you rely
+on it.
 
 ## Editing
 

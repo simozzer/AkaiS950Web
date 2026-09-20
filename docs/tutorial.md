@@ -30,6 +30,10 @@ If you want either, serve the folder — `node serve.js`, `python -m http.server
 Drop one or more `.hfe` or `.img` files anywhere on the window, or use **Open images**. A
 Gotek/HxC `.hfe` and a raw 800K `.img` are both read, and either can be written back out.
 
+Or start with nothing: **New image** makes an empty 800K disk in the page, ready to fill.
+It exists only in the browser until you download it, so it is marked unsaved from the
+moment it appears.
+
 The tree on the left fills with what is on the disk, grouped by type: programs, samples,
 drum sets and the overall settings. The status line says whether every sector read cleanly
 — worth a glance, because a disk with bad sectors is telling you something.

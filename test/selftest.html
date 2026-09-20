@@ -523,11 +523,51 @@
               check('undo takes the loop back',
                     /Undid loop on/.test(doc.getElementById('status').textContent),
                     doc.getElementById('status').textContent);
-              treeChecks();
+              newImageChecks();
             }, 300);
           }, 400);
         }, 400);
       }, 300);
+    }
+
+    /**
+     * A disk from nothing. It has to arrive empty, take a program, and know it has
+     * unsaved work - there is no file behind it, so losing it loses everything.
+     */
+    function newImageChecks() {
+      var before = doc.querySelectorAll('nav .disk').length;
+      doc.getElementById('newImage').click();
+
+      setTimeout(function () {
+        var after = doc.querySelectorAll('nav .disk').length;
+        check('New image adds a disk', after === before + 1, before + ' -> ' + after);
+
+        var said = doc.getElementById('status').textContent;
+        check('it is empty, and says how much room it has',
+              /800K, empty, 796 blocks free/.test(said), said.slice(0, 64));
+        check('and it is marked unsaved from the start',
+              doc.querySelectorAll('nav .disk.dirty').length > 0,
+              doc.querySelectorAll('nav .disk.dirty').length + ' marked');
+
+        // New program asks for a name, and an unanswered prompt would hang the run
+        var realPrompt = win.prompt;
+        win.prompt = function () { return 'FROM NEW'; };
+        doc.getElementById('newProgram').click();
+        win.prompt = realPrompt;
+
+        setTimeout(function () {
+          var now = doc.getElementById('status').textContent;
+          check('a program can be created on it', /FROM NEW/.test(now), now.slice(0, 70));
+
+          // and the disk still reads back as a disk
+          var items = doc.querySelectorAll('nav .item');
+          var found = false;
+          for (var i = 0; i < items.length; i++)
+            if (items[i].textContent.indexOf('FROM NEW') === 0) found = true;
+          check('the new program is in the tree', found);
+          treeChecks();
+        }, 500);
+      }, 500);
     }
 
     /** The tree must actually toggle. */

@@ -1827,6 +1827,31 @@
   // ------------------------------------------------------------------- events
 
   $('pick').onchange = function () { openFiles(this.files); this.value = ''; };
+
+  /**
+   * Start an empty disk. It lives in the page like any other, and is marked unsaved
+   * from the moment it appears, because unlike the others it has no file behind it:
+   * closing the tab is the only way to lose work that was never anywhere else.
+   */
+  $('newImage').onclick = function () {
+    var n = 1, name;
+    do {
+      name = n === 1 ? 'new-disk.img' : 'new-disk-' + n + '.img';
+      n++;
+    } while (disks.some(function (d) { return d.name === name; }));
+
+    var made = Akai.blank(name);
+    made.isNew = true;              // so Download image does not suggest "-edited"
+    made.modified = true;
+    disks.push(made);
+
+    finish([]);
+    showDisk(made);
+
+    say('Started ' + name + ' - 800K, empty, ' + made.freeBlocks() + ' blocks free.  ' +
+        'Add a program or a sample, then Download image. It exists only in this page ' +
+        'until you do.');
+  };
   $('audioPick').onchange = function () {
     if (this.files && this.files[0]) addSampleFrom(this.files[0]);
     this.value = '';
@@ -2073,7 +2098,7 @@
     $('svSource').textContent = d.name + (d.rawHfe ? '' :
       '  -  opened from a raw image; an HFE will be built for it');
 
-    $('svName').value = d.name.replace(/\.[^.]+$/, '') + '-edited';
+    $('svName').value = d.name.replace(/\.[^.]+$/, '') + (d.isNew ? '' : '-edited');
     $('saveDlg').showModal();
     refreshSave();
     $('svName').focus();
@@ -2090,7 +2115,8 @@
     if (!saveDisk) return;
 
     var d = saveDisk, fmt = saveFormat();
-    var file = downloadName($('svName').value, fmt === 'hfe', d.name.replace(/\.[^.]+$/, '') + '-edited');
+    var fallback = d.name.replace(/\.[^.]+$/, '') + (d.isNew ? '' : '-edited');
+    var file = downloadName($('svName').value, fmt === 'hfe', fallback);
 
     $('saveDlg').close();
     saveDisk = null;

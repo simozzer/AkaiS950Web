@@ -1945,6 +1945,24 @@ var Akai = (function () {
   };
 
   /** Read a .hfe or a raw sector image. */
+  /**
+   * A new disk: 800 blocks of nothing.
+   *
+   * That really is all an empty formatted disk is. The only structures in the reserved
+   * blocks are the directory and the allocation table, and both are empty when zero -
+   * the 960 bytes after the table are zero on all 101 library disks, so there is no
+   * boot record, label or signature to reproduce. An empty directory and an empty table
+   * is a disk with nothing on it.
+   *
+   * What this does not write is the OVERALL SE and DRUM SET files that 99 of the 101
+   * carry. Those hold settings rather than structure, and the overall file names a
+   * sample - which a new disk has none of. Two library disks have neither and read
+   * perfectly, so their absence is something the format tolerates.
+   */
+  function blank(name) {
+    return load(name || 'new-disk.img', new Uint8Array(BLOCK * 800));
+  }
+
   function load(name, bytes) {
     var raw = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
 
@@ -1963,6 +1981,7 @@ var Akai = (function () {
 
   return {
     load: load,
+    blank: blank,
     extract: extract,
     rebuild: rebuild,
     sideCells: sideCells,
@@ -1982,7 +2001,7 @@ var Akai = (function () {
 
 // Shown in the page header. Bump it with any change to the write path, so a browser
 // running a cached copy is obvious at a glance rather than after a ruined disk.
-Akai.BUILD = '2026-09-20d';
+Akai.BUILD = '2026-09-20e';
 
 if (typeof module !== 'undefined' && module.exports) module.exports = Akai;
 
