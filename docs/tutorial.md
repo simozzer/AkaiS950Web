@@ -163,9 +163,19 @@ merely readable, it is the same file the Akai drive wrote.
 ## 9. Playing it from a MIDI source
 
 Pick a MIDI input in the toolbar, select a program, and play. Eight voices, with the
-keygroup under each note deciding the sample, the tuning and the whole voice — filter and
-envelopes included. Useful for hearing a program as an instrument rather than as a list, and
-for sending the same part here and to a real S950 to compare the two.
+keygroup under each note deciding the sample, the tuning and the whole voice — filter,
+envelopes and vibrato included. Useful for hearing a program as an instrument rather than
+as a list, and for sending the same part here and to a real S950 to compare the two.
+
+**Your modwheel works.** The S950 adds vibrato in proportion to it, scaled by a per-keygroup
+setting that 427 of the library’s 1908 keygroups change, so a program that seems to have no
+LFO may simply be waiting for the wheel.
+
+The vibrato is measured rather than invented: a sine, a rate that runs from 1.8 Hz to 10.6
+and is linear in the stored setting, a depth of about 1.5 cents a unit, and a delay that
+fades the wobble in rather than waiting and then starting it. The **LFO** box beside the
+filter one turns it off. How all that was measured is in the README, under *Calibrating the
+LFO*.
 
 MIDI is granted per-site and only over http or https, so serve the page (see step 1) and
 allow the permission when the browser asks.
