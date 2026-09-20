@@ -1406,13 +1406,16 @@
         g.gain.setValueAtTime(0, t + v.release + 0.001);
 
         if (src) src.stop(t + v.release + 0.02);
+        if (v.osc) v.osc.stop(t + v.release + 0.02);
       } catch (e) {
         try { if (src) src.stop(); } catch (e2) { /* already finished */ }
+        try { if (v.osc) v.osc.stop(); } catch (e3) { /* already finished */ }
       }
       return;
     }
 
     if (v.src) { try { v.src.stop(); } catch (e) { } }
+    if (v.osc) { try { v.osc.stop(); } catch (e) { } }
   }
 
   /** Everything off - what the old single-voice stop() meant. */
@@ -1488,6 +1491,41 @@
       src.loopEnd = Math.min(lp.end, words.length) / e.sampleRate;
     }
 
+    /*
+     * The LFO: a sine on the playback rate, which is what the machine turned out to do.
+     *
+     * detune is in cents, which is exactly the unit the depth was measured in, so the
+     * oscillator's output needs no conversion - a gain of N cents on a unit sine IS a
+     * swing of N cents. The delay is a fade rather than a wait, so the gain ramps from
+     * nothing rather than switching on.
+     *
+     * Skipped entirely when there is nothing to hear, which is most of the library: the
+     * depth is zero in the great majority of keygroups, and an oscillator per voice for
+     * a modulation of nothing is a waste of a node.
+     */
+    var osc = null;
+    if (vcf && vcf.kg && $('useLfo').checked && src.detune) {
+      var mod = AkaiAudio.lfo(vcf.kg, wheel);
+      if (mod) {
+        var t1 = ac.currentTime;
+        osc = ac.createOscillator();
+        osc.type = 'sine';
+        osc.frequency.value = mod.hz;
+
+        var depth = ac.createGain();
+        if (mod.fadeSeconds > 0.01) {
+          depth.gain.setValueAtTime(0, t1);
+          depth.gain.linearRampToValueAtTime(mod.cents, t1 + mod.fadeSeconds);
+        } else {
+          depth.gain.value = mod.cents;
+        }
+
+        osc.connect(depth);
+        depth.connect(src.detune);
+        osc.start();
+      }
+    }
+
     var env = (vcf && vcf.kg && $('useVcf').checked)
       ? AkaiAudio.vcaEnvelope(vcf.kg, vcf.zone, vcf.velocity) : null;
 
@@ -1513,10 +1551,10 @@
 
       src.connect(g);
       g.connect(out());
-      voices[key] = { src: src, gain: g, release: env.release, at: voiceSeq++ };
+      voices[key] = { src: src, gain: g, osc: osc, release: env.release, at: voiceSeq++ };
     } else {
       src.connect(out());
-      voices[key] = { src: src, gain: null, release: 0, at: voiceSeq++ };
+      voices[key] = { src: src, gain: null, osc: osc, release: 0, at: voiceSeq++ };
     }
 
     src.start();
@@ -1969,6 +2007,17 @@
            ' (' + lo + '-' + hi + '), not always continuously.';
   }
 
+  /*
+   * Where the modwheel is, 0..127.
+   *
+   * Held here rather than read from a control, because it is a performance gesture: the
+   * S950 adds LFO depth in proportion to it, and 427 keygroups of 1908 set byte 22 to
+   * something other than the default. A note already sounding keeps the depth it started
+   * with - the machine does not, but chasing a moving wheel through a scheduled ramp buys
+   * very little for the noise it would add here.
+   */
+  var wheel = 0;
+
   function onMidi(ev) {
     var d = ev.data;
     if (!d || d.length < 2) return;
@@ -1980,6 +2029,7 @@
     // a note-on at velocity 0 is a note-off, which most sequencers send
     if (status === 0x90 && d[2] > 0) midiNoteOn(d[1], d[2]);
     else if (status === 0x80 || (status === 0x90 && d[2] === 0)) releaseVoice('midi:' + d[1]);
+    else if (status === 0xB0 && d[1] === 1) wheel = d[2];                 // modwheel
     else if (status === 0xB0 && (d[1] === 120 || d[1] === 123)) stop();   // all notes off
   }
 

@@ -165,6 +165,58 @@ check('  with the desync pairs exactly two octaves apart',
       ratios.length === 2 && ratios.every(function (r) { return Math.abs(r - 4) < 1e-9; }),
       ratios.map(function (r) { return r.toFixed(4); }).join(' and '));
 
+/* --- the emulation against the machine -------------------------------------- */
+//
+// audio.js now carries an LFO, and every constant in it came off a recording. This is
+// the guard on those numbers: what the emulation says, against what the S950 did. A
+// tolerance of a couple of percent, because these are readings and not definitions.
+
+var Audio = require('../audio.js');
+
+console.log('');
+console.log('the emulation, against what the machine measured:');
+
+function emu(rate, depth, delay, toWheel, wheelAt) {
+  return Audio.lfo({ lfoRate: rate, lfoDepth: depth, lfoDelay: delay,
+                     lfoDepthToWheel: toWheel === undefined ? 0 : toWheel }, wheelAt || 0);
+}
+
+// the rate ladder, as the machine played it
+[[0, 1.788], [25, 3.995], [55, 6.675], [99, 10.613]].forEach(function (m) {
+  var got = emu(m[0], 50, 0).hz;
+  check('rate ' + m[0] + ' plays at ' + m[1] + ' Hz', near(got, m[1], m[1] * 0.02),
+        'emulation says ' + got.toFixed(3));
+});
+
+// the depth ladder
+[[20, 29.87], [60, 92.18], [99, 150.21]].forEach(function (m) {
+  var got = emu(60, m[0], 0).cents;
+  check('depth ' + m[0] + ' swings ' + m[1] + ' cents', near(got, m[1], m[1] * 0.03),
+        'emulation says ' + got.toFixed(1));
+});
+
+// the delay, which is a fade and reaches nine tenths at 7.07/(100-byte)
+[[0, 0.068], [50, 0.159], [75, 0.311], [99, 7.082]].forEach(function (m) {
+  var ninety = emu(60, 99, m[0]).fadeSeconds * 0.9;
+  check('delay ' + m[0] + ' fades in by ' + m[1] + 's',
+        near(ninety, m[1], Math.max(0.03, m[1] * 0.1)),
+        'emulation says ' + ninety.toFixed(3));
+});
+
+// the wheel, at both the settings that were measured
+check('a full wheel at byte 22 = 99 adds 71.5 cents',
+      near(emu(60, 0, 0, 99, 127).cents, 71.45, 2),
+      'emulation says ' + emu(60, 0, 0, 99, 127).cents.toFixed(1));
+check('  and at byte 22 = 50 adds half of that',
+      near(emu(60, 0, 0, 50, 127).cents, 36.14, 2),
+      'emulation says ' + emu(60, 0, 0, 50, 127).cents.toFixed(1));
+check('  and nothing at all with the wheel down',
+      emu(60, 0, 0, 99, 0) === null, 'silent');
+
+// the depth is zero in most of the library, and that has to cost nothing
+check('a keygroup with no depth and no wheel builds no oscillator',
+      emu(60, 0, 0, 50, 0) === null, 'silent');
+
 /* --- the pieces, one at a time --------------------------------------------- */
 
 console.log('');

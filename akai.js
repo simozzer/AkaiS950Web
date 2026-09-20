@@ -656,6 +656,11 @@ var Akai = (function () {
         velToRelease: (raw[10] << 24) >> 24,
         velToLoudness: raw[11],
         lfoDelay: raw[15], lfoRate: raw[16], lfoDepth: raw[17],
+
+        // How far the wheel and aftertouch may add to that depth. Byte 22 defaults to 50
+        // and 427 keygroups of 1908 change it; byte 21 is zero in all 1908, since no
+        // library program uses aftertouch.
+        lfoDepthToWheel: raw[22], lfoDepthToAftertouch: raw[21],
         flags: raw[18],
         constantPitch: (raw[18] & 0x01) !== 0,
         lfoDesync: (raw[18] & 0x04) !== 0,
@@ -2027,7 +2032,7 @@ var Akai = (function () {
 
 // Shown in the page header. Bump it with any change to the write path, so a browser
 // running a cached copy is obvious at a glance rather than after a ruined disk.
-Akai.BUILD = '2026-09-20g';
+Akai.BUILD = '2026-09-20h';
 
 if (typeof module !== 'undefined' && module.exports) module.exports = Akai;
 

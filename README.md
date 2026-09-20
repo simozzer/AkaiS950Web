@@ -702,6 +702,14 @@ modulated and may not have sounded at all.
 
 ### What the LFO does
 
+**The emulation plays it.** `audio.js` carries these constants and `play()` builds a sine
+on the playback rate from them — Web Audio’s `detune` is already in cents, which is the
+unit they were measured in — with the delay as a fade rather than a wait and the modwheel
+adding to the depth over MIDI. There is an **LFO** box beside the filter one to turn it
+off, and no oscillator is built at all for a keygroup whose depth is zero and whose wheel
+is down, which is most of the library. `test/lfotest.js` checks the emulation against the
+readings below, so an edit to any of these constants has to argue with the machine.
+
 The third take was clean: peaks at −20 dBFS, nothing clipped, all 26 clips within a
 semitone of the pitch asked for, the run lined up to 7 ms, and every rung of the rate
 ladder explaining 0.99 or better of its own track. This is what it says.

@@ -505,6 +505,63 @@ var AkaiAudio = (function () {
     VEL_DB_PER_STEP: 0.63         // measured, at velToLoudness 99
   };
 
+  /*
+   * The LFO, measured on the machine. See README, "Calibrating the LFO".
+   *
+   * Every number here came off a recording of an S950 playing a run written for the
+   * purpose, and every one of them is a surprise of some kind:
+   *
+   *   - the RATE is linear in the stored byte, where the filter's cutoff is exponential
+   *     and this was expected to be too. Two takes, different disks, different keys,
+   *     agreeing to 0.2%;
+   *   - the WAVEFORM is a sine, r 1.000 over 41 cycles, not the triangle a guess would
+   *     reach for;
+   *   - the DELAY is a fade-in rather than a wait, and its length is a constant divided
+   *     by how far the setting is from the top, which fits at r2 0.99998 where a straight
+   *     line fits at 0.52;
+   *   - and it moves pitch and nothing else. At full depth the level moved 0.23 dB.
+   */
+  var LFO = {
+    RATE_HZ_AT_ZERO: 1.785,       // measured: 8 rungs on a straight line, r2 0.99998
+    RATE_HZ_PER_UNIT: 0.08918,
+
+    DEPTH_CENTS_PER_UNIT: 1.526,  // measured: r2 0.9998, so depth 99 is +-150 cents
+
+    // measured: the fade reaches nine tenths of full depth at 7.07/(100-byte) seconds,
+    // and climbs in a straight line to get there - so the whole ramp is that over 0.9.
+    DELAY_FADE_CONSTANT: 7.86,
+
+    // measured: 72.1 cents at the top of the wheel with byte 22 at 99, r2 0.999, and
+    // byte 22 = 50 gave 0.506 of that where proportional would be 0.505.
+    WHEEL_CENTS_AT_FULL: 72.1
+  };
+
+  /**
+   * What one keygroup's LFO does, in units a synthesiser can use.
+   *
+   * `wheel` is the modwheel, 0..127. Returns null when there is nothing to hear, so the
+   * caller can skip building an oscillator for the 90% of keygroups whose depth is zero
+   * and whose wheel is down.
+   */
+  function lfo(kg, wheel) {
+    if (!kg) return null;
+
+    var own = (kg.lfoDepth || 0) * LFO.DEPTH_CENTS_PER_UNIT;
+    var added = LFO.WHEEL_CENTS_AT_FULL *
+                ((kg.lfoDepthToWheel === undefined ? 50 : kg.lfoDepthToWheel) / 99) *
+                (Math.max(0, Math.min(127, wheel || 0)) / 127);
+    var cents = own + added;
+    if (cents < 0.5) return null;
+
+    return {
+      hz: LFO.RATE_HZ_AT_ZERO + (kg.lfoRate || 0) * LFO.RATE_HZ_PER_UNIT,
+      cents: cents,
+      // the delay byte is a fade, and at 99 it is a seven-second one
+      fadeSeconds: LFO.DELAY_FADE_CONSTANT / Math.max(1, 100 - (kg.lfoDelay || 0)),
+      fromWheel: added
+    };
+  }
+
   /**
    * A stored 0..99 cutoff as a frequency, exponential between the ends of its travel.
    * The top end depends on the sample rate, so a sample recorded at 12.5 kHz is only
@@ -704,6 +761,8 @@ var AkaiAudio = (function () {
     filterWords: filterWords,
     vcfEnvelope: vcfEnvelope,
     vcaEnvelope: vcaEnvelope,
+    lfo: lfo,
+    LFO: LFO,
     applyVcf: applyVcf,
     decode: decode,
     toMono: toMono,

@@ -65,7 +65,9 @@
       <h3>What it does</h3>
       <ul>
         <li><b>Browse and listen.</b> Programs, samples and keygroups, with waveforms and
-          an on-screen keyboard that plays each sample at the pitch its keygroup gives it.</li>
+          an on-screen keyboard that plays each sample at the pitch its keygroup gives it —
+          through the S950’s filter, envelopes and vibrato, every constant of them measured
+          from recordings of the machine.</li>
         <li><b>Start a disk from nothing.</b> <b>New image</b> makes an empty 800K disk to
           fill and download, as well as opening the ones you have.</li>
         <li><b>Add samples</b> from any audio file your browser can open. Converted to Akai
@@ -270,6 +272,7 @@
             <button id="stop">Stop</button>
             <label><input type="checkbox" id="useLoop"> honour loop points</label>
             <label title="Emulate the S950's 6th-order Butterworth low-pass. The slope is exact and the top of its range is measured; the bottom of the sweep and the modulation depths are approximate."><input type="checkbox" id="useVcf" checked> filter + envelope</label>
+            <label title="The S950's vibrato, measured on the machine: a sine, linear in rate, 1.53 cents of depth per unit, and a delay that fades in rather than waits. The modwheel adds to it over MIDI."><input type="checkbox" id="useLfo" checked> LFO</label>
           </div>
         </div>
       </div>
