@@ -155,9 +155,15 @@
         your own machine.
       </p>
       <p>
-        <b>Download source</b> at the top right gives you the whole thing to run locally:
-        plain HTML and JavaScript, no build step and no dependencies. Worth doing if you
-        would rather not depend on this page staying up.
+        <b>Download source</b> at the top right gives you the app to run locally: the page,
+        the three scripts it loads, a small static server and the README &mdash; seven files,
+        no build step and no dependencies. Worth doing if you would rather not depend on this
+        page staying up.
+      </p>
+      <p>
+        The tests, the calibration rig and the format document are not in it. They are on
+        GitHub with the rest of the source, and a download that only has to run is friendlier
+        than one that carries the workshop with it.
       </p>
 
       <h3>Running it yourself</h3>
@@ -167,10 +173,9 @@
         so a <code>file://</code> page can load them, with no server and no build step.
       </p>
       <p>
-        Two things a local file cannot have, though, because browsers only grant them to a
-        page served over http or https: <b>Web MIDI</b>, so the MIDI control stays greyed
-        out, and <code>fetch</code>, which <code>selftest.html</code> needs to load a disk
-        image. For either, serve the folder &mdash; any static server will do:
+        One thing a local file cannot have, though, because browsers only grant it to a page
+        served over http or https: <b>Web MIDI</b>, so the MIDI control stays greyed out. For
+        that, serve the folder &mdash; any static server will do:
       </p>
       <ul>
         <li><code>node serve.js</code> &mdash; included in the download, and it prints the

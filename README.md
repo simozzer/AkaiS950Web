@@ -223,7 +223,7 @@ Everything that checks the app, or was used to work the format out, lives beside
 | `vcfcal.js` | derives the real cutoff mapping from recordings of the hardware |
 | `keycal.js` | what key-to-filter tracking means, measured from three notes |
 | `probe.js`, `ram.js`, `zones.js`, `repair.js` | one-off diagnostics from working the format out |
-| `makezip.ps1` | builds the downloadable source bundle |
+| `makezip.js` | builds the downloadable bundle — the page and what it loads, read out of `index.html` rather than listed by hand |
 | `make-expected.ps1` | dumps what the C# sees, for `test/verify.js` to diff against |
 
 ### `docs/` — what explains it

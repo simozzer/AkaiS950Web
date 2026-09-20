@@ -1982,7 +1982,7 @@ var Akai = (function () {
 
 // Shown in the page header. Bump it with any change to the write path, so a browser
 // running a cached copy is obvious at a glance rather than after a ruined disk.
-Akai.BUILD = '2026-09-20c';
+Akai.BUILD = '2026-09-20d';
 
 if (typeof module !== 'undefined' && module.exports) module.exports = Akai;
 
