@@ -494,55 +494,74 @@ var AkaiAudio = (function () {
      * without evidence. It also starts a unit or two off zero rather than at it; that dead
      * zone is real and measured but not modelled, being worth less than the 9% this fixes.
      */
-    ENV_OCTAVES: 8.3,     // measured
+    ENV_OCTAVES: 8.5,     // measured
 
-    // The whole envelope scale sits about 1.7x slower than first assumed. That earlier
-    // reading measured time from where the clip was trimmed, and the trimmer looks for a
-    // run of sound rather than an edge - it reports a note about 0.3 s after it began,
-    // which on a two-second envelope is a sixth of the answer. Timed from the note-on:
-    //
-    //     VCA decay 80   2.86 s to the sustain floor
-    //     VCF decay 80   2.25 s to the base
-    //     attack 70      1.39 s to full, or 1.66 from the -6 dB crossing
-    //
-    // The 10000:1 span is still an assumption - one decay cannot show the curve, only
-    // where it sits - so it is kept and the bottom of it fitted to the VCA decay.
-    ENV_MIN_MS: 1.68,     // measured: VCA decay 80 at 2.86 s
-    ENV_MAX_MS: 16800,    // assumed: the same 10000:1 span, moved with the bottom
+    /*
+     * Measured points, not a formula - see envSeconds.
+     *
+     * This replaces a pair of constants, one measured and one assumed: a shortest time of
+     * 1.68 ms taken from a single VCA decay at stored 80, and a 10000:1 span across the
+     * range that nothing had ever checked. The span is the part that was wrong. The real one
+     * is nearer 1400:1, so the old curve ran half as fast as the machine below stored 70 and
+     * nearly twice as fast above stored 85.
+     *
+     * Nine settings, measured on the filter envelope where a moving cutoff can be watched
+     * all the way down a fourteen-second note. Attack, decay and release are three separate
+     * readings of this one curve, and where they overlap they agree to 1.07x - so it really
+     * is one curve, and it is this one.
+     *
+     *     stored      50     55     60     65     70     80     85     90     95
+     *     measured  0.357  0.418  0.722  0.881  1.404  2.814  4.037  4.117  8.095
+     *     old model 0.176  0.280  0.446  0.711  1.131  2.868  4.567  7.272 11.580
+     *
+     * Measured twice over, because the analysis has a bias of its own - a window averages the
+     * sweep passing through it - and that bias is found by putting a RENDER of the model
+     * through the same analysis, where the answer is known. The first pass used a model that
+     * was out by up to 2x, so its biases were taken at the wrong sweep rates; adopting its
+     * table and measuring again moved every point by less than 8%. A third pass against THIS
+     * table reads every setting back at 0.95 to 1.04 of it, and the points oscillate rather
+     * than drift - so what is left is the measurement's own repeatability and not an error
+     * still to be chased.
+     *
+     * Stored 50 only appears at all on the second pass: under the old curve the render was
+     * over inside one analysis window, so there was nothing to take a bias from.
+     *
+     * The VCA decay confirms it independently, from the same take and a different envelope:
+     * measured against a fixed depth it gives 3.96 s at stored 85 against this table's 4.04,
+     * and 8.49 s at stored 95 against 8.09.
+     *
+     * Stored 90 is the odd one. Everything else sits within a few per cent of a plain
+     * exponential through these points; 90 sits 41% off it, and all three of attack, decay
+     * and release put it there, agreeing to 1.03x. Kept as measured rather than smoothed
+     * away - but it is the one point a second take should be asked about first.
+     *
+     * The ends are extrapolated, not measured: nothing reaches below 50 or above 95, so both
+     * continue at the slope fitted across every measured point. Extrapolating from the two
+     * nearest points instead put stored 0 at 320 ms, which every percussive sample refutes.
+     */
+    ENV_TIME: [
+      [0, 0.01040], [50, 0.3565], [55, 0.4184], [60, 0.7224], [65, 0.8806],
+      [70, 1.4037], [80, 2.8136], [85, 4.0370], [90, 4.1172], [95, 8.0947],
+      [99, 10.7401]
+    ],
 
-    // Attack still does not sit on the decay's curve. A stored 70 predicts 1.13 s and
-    // measures 1.39 to 1.66 depending on whether you read where it reaches full or where
-    // it passes -6 dB; 1.33x splits them. Smaller than the 1.6 this used to carry, which
-    // was that 0.3 s timing error in disguise.
-    ATTACK_SCALE: 1.33,   // measured: attack 70 between 1.39 s and 1.66 s
+    // The VCA attack against the shared curve. One, within the measurement.
+    //
+    // It was 1.33, which is what it took to reach the measured attack at stored 70 when the
+    // curve underneath was the old one. The curve has moved, and at stored 70 the new curve
+    // alone lands on that same measurement.
+    //
+    // It is the weakest number here. Stored 85 says the VCA attack reaches full in 2.1 s
+    // where this gives 4.04, so the attack's curve is flatter than the shared one and no
+    // single multiplier can express that. It wants a run of its own, with the level driven
+    // well clear of the noise so the whole ramp is visible.
+    ATTACK_SCALE: 1.0,    // measured: attack 70 reaches full at about 1.5 s
 
     // The filter's envelope runs quicker than the VCA's for the same stored number:
     // decay 80 reached the base in 2.25 s against the VCA's 2.86. One measurement each,
     // so provisional - but a measurement, where sharing the VCA's scale was a guess.
     VCF_TIME_SCALE: 0.78, // measured: 2.25 s against the VCA's 2.86
 
-    /*
-     * APPROXIMATE: the filter's release stops growing, at somewhere around a second.
-     *
-     * The envelope time curve is badly wrong for this one stage. Two takes, converting when
-     * the sweep passed a fixed probe into a release:
-     *
-     *     stored        50    60    70    80    90    99
-     *     run 1       0.35  0.38  0.42     -     -     -
-     *     run 2          -     -  1.04  1.09  1.05  1.09
-     *     the curve   0.14  0.35  0.88  2.24  5.67  13.1
-     *
-     * Run 2 covers stored 70 to 99, over which the curve climbs fifteenfold, and measures
-     * the same second throughout. Whatever the release does it does not follow the curve,
-     * and 13 seconds is not a thing this machine does.
-     *
-     * A cap is as much as the data carries. The two takes differ by 2.5x at stored 70, and
-     * that gap is a warning in itself: turning a probe crossing into a release assumes the
-     * fall is a straight line in octaves, so two sweeps of different depths disagreeing says
-     * it is not straight. Until something measures the SHAPE, a number fitted to these
-     * crossings would be precision that is not there.
-     */
-    VCF_RELEASE_MAX: 1.0, // approximate
 
     // Sustain is NOT a fraction of the amplitude. A stored 50 measured 19.7 dB down,
     // where a plain 50/99 of the amplitude would be 5.9 dB down - a 14 dB error, and
@@ -663,10 +682,29 @@ var AkaiAudio = (function () {
     return hz < floor ? floor : hz > ceiling ? ceiling : hz;
   }
 
-  /** A stored 0..99 envelope time in seconds. */
+  /**
+   * A stored 0..99 envelope time in seconds, read off CAL.ENV_TIME.
+   *
+   * Straight in log time between the measured points, the same way cutoffHz is straight in
+   * log frequency between its own: the quantity is exponential in the stored byte, so a
+   * straight line in the log is what "between two measurements" means here.
+   */
   function envSeconds(stored) {
-    var v = clamp(stored, 0, 99) / 99;
-    return (CAL.ENV_MIN_MS * Math.pow(CAL.ENV_MAX_MS / CAL.ENV_MIN_MS, v)) / 1000;
+    var T = CAL.ENV_TIME;
+    var v = clamp(stored, 0, 99);
+    var seconds = T[T.length - 1][1];
+
+    for (var i = 1; i < T.length; i++) {
+      if (v > T[i][0]) continue;
+
+      var lo = T[i - 1][1], hi = T[i][1];
+      var span = T[i][0] - T[i - 1][0];
+      var t = span === 0 ? 0 : (v - T[i - 1][0]) / span;
+      seconds = lo * Math.pow(hi / lo, t);       // straight in log time
+      break;
+    }
+
+    return seconds;
   }
 
   /**
@@ -757,9 +795,7 @@ var AkaiAudio = (function () {
     var a = written ? envSeconds(kg.vcf[0]) * CAL.VCF_TIME_SCALE : 0;
     var d = written ? envSeconds(kg.vcf[1]) * CAL.VCF_TIME_SCALE : 0;
     var sustain = written ? clamp(kg.vcf[2], 0, 99) / 99 : 1;
-    // capped: the filter's release stops growing about a second in - see VCF_RELEASE_MAX
-    var rel = written
-      ? Math.min(CAL.VCF_RELEASE_MAX, envSeconds(kg.vcf[3]) * CAL.VCF_TIME_SCALE) : 0;
+    var rel = written ? envSeconds(kg.vcf[3]) * CAL.VCF_TIME_SCALE : 0;
     var depth = written ? ((kg.vcfAmount || 0) / 50) * CAL.ENV_OCTAVES : 0;
 
     // The filter is also the reconstruction filter, so its cutoff cannot go above the
@@ -887,16 +923,25 @@ var AkaiAudio = (function () {
     /*
      * Retuned every eight samples, not every sixty-four.
      *
-     * A release of 0 is the fastest the machine has - about 1.3 ms - and over that the cutoff
-     * falls five and a half octaves. Moving a sixth-order cascade that far in one step, while
-     * it keeps the state the old coefficients left behind, makes it ring: measured at a
-     * 64-sample block the output peaked at 9.2, nearly ten times full scale, which is a loud
-     * pop rather than a filter closing. Shortening the step is what fixes it -
+     * This was put in against a ring: moving a sixth-order cascade several octaves in one
+     * step, while it keeps the state the old coefficients left behind, injects energy, and a
+     * 64-sample block was measured peaking at nearly ten times full scale on the fastest
+     * release the model then had - about 1.3 ms.
      *
-     *     block   64    32    16     8     4     1
-     *     peak   9.19  3.46  0.88  0.80  0.75  0.73
+     * The envelope curve has since been measured properly and the fastest release is 6.1 ms,
+     * not 1.3, and at that speed the step size no longer matters. A sawtooth swept five and a
+     * half octaves, peak output by block:
      *
-     * - and eight is where the curve has flattened, for a fraction of the cost of one.
+     *     sweep      64    32    16     8     1
+     *     1.31 ms   1.18  1.18  1.18  1.18  1.07
+     *     6.12 ms   1.39  1.41  1.21  1.20  1.20
+     *      500 ms   1.39  1.39  1.39  1.39  1.38
+     *
+     * The 1.4 is not an artefact - it is there at a block of one and at a sweep three orders
+     * of magnitude slower, which is a Butterworth's outer section having a Q of 1.9 and
+     * lifting the harmonics it passes over. Eight is kept anyway: it costs almost nothing,
+     * it is the more correct integration of a moving filter, and it is the only thing
+     * standing between a future faster release and the pop this was written for.
      */
     var block = 8;
     for (var i = 0; i < count; i += block) {

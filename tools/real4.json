@@ -1,0 +1,152 @@
+{
+  "trajectory": [
+    {
+      "label": "attack 50",
+      "section": "attack",
+      "setting": 50,
+      "travel": 0.9921722762872475,
+      "rampSeconds": 0.4545330988747318,
+      "tau": 0.3283643815454751,
+      "settledBy": 0.375,
+      "prefers": "neither clearly - they fit within 30% of each other"
+    },
+    {
+      "label": "attack 55",
+      "section": "attack",
+      "setting": 55,
+      "travel": 1.1380303121647095,
+      "rampSeconds": 0.5115810072201118,
+      "tau": 0.3382153129918393,
+      "settledBy": 0.375,
+      "prefers": "neither clearly - they fit within 30% of each other"
+    },
+    {
+      "label": "attack 60",
+      "section": "attack",
+      "setting": 60,
+      "travel": 1.4343707423826089,
+      "rampSeconds": 0.6875220949644717,
+      "tau": 0.4545330988747318,
+      "settledBy": 0.625,
+      "prefers": "neither clearly - they fit within 30% of each other"
+    },
+    {
+      "label": "attack 65",
+      "section": "attack",
+      "setting": 65,
+      "travel": 1.5864529363174018,
+      "rampSeconds": 0.8455654564989595,
+      "tau": 0.4966805895340891,
+      "settledBy": 0.75,
+      "prefers": "a STRAIGHT RAMP"
+    },
+    {
+      "label": "attack 70",
+      "section": "attack",
+      "setting": 70,
+      "travel": 1.7790729772015137,
+      "rampSeconds": 1.2599620971596435,
+      "tau": 0.6976104643910616,
+      "settledBy": 1.125,
+      "prefers": "a STRAIGHT RAMP"
+    },
+    {
+      "label": "attack 80",
+      "section": "attack",
+      "setting": 80,
+      "travel": 1.8632055167776416,
+      "rampSeconds": 2.380651637989344,
+      "tau": 1.279717564192896,
+      "settledBy": 2.2262499999999994,
+      "prefers": "a STRAIGHT RAMP"
+    },
+    {
+      "label": "attack 90",
+      "section": "attack",
+      "setting": 90,
+      "travel": 1.92506603168864,
+      "rampSeconds": 3.394239990651496,
+      "tau": 1.8245712492362958,
+      "settledBy": 3.25375,
+      "prefers": "a STRAIGHT RAMP"
+    },
+    {
+      "label": "decay 85",
+      "section": "decay",
+      "setting": 85,
+      "travel": 1.8470240320175815,
+      "rampSeconds": 3.2953786317004816,
+      "tau": 1.8245712492362958,
+      "settledBy": 3.0825,
+      "prefers": "a STRAIGHT RAMP"
+    },
+    {
+      "label": "decay 90",
+      "section": "decay",
+      "setting": 90,
+      "travel": 1.8335050676988258,
+      "rampSeconds": 3.2953786317004816,
+      "tau": 1.8793083867133846,
+      "settledBy": 3.25375,
+      "prefers": "a STRAIGHT RAMP"
+    },
+    {
+      "label": "decay 95",
+      "section": "decay",
+      "setting": 95,
+      "travel": 1.908588564191133,
+      "rampSeconds": 6.5037148165789205,
+      "tau": 3.496067190371041,
+      "settledBy": 6.336249999999996,
+      "prefers": "a STRAIGHT RAMP"
+    },
+    {
+      "label": "release 70",
+      "section": "release",
+      "setting": 70,
+      "travel": 1.6709974773220997,
+      "rampSeconds": 1.2112435627361373,
+      "tau": 0.7114779372611413,
+      "settledBy": 1.125,
+      "prefers": "a STRAIGHT RAMP"
+    },
+    {
+      "label": "release 80",
+      "section": "release",
+      "setting": 80,
+      "travel": 1.777355685903663,
+      "rampSeconds": 2.253269824776108,
+      "tau": 1.2475808696182216,
+      "settledBy": 2.125,
+      "prefers": "a STRAIGHT RAMP"
+    },
+    {
+      "label": "release 90",
+      "section": "release",
+      "setting": 90,
+      "travel": 1.8874497484304358,
+      "rampSeconds": 3.309002703186814,
+      "tau": 1.832114567291579,
+      "settledBy": 3.25,
+      "prefers": "a STRAIGHT RAMP"
+    }
+  ],
+  "floor": [
+    {
+      "amount": -4,
+      "hz": 757.3171909046791
+    },
+    {
+      "amount": -8,
+      "hz": 488.4840296345061
+    },
+    {
+      "amount": -12,
+      "hz": 306.11987693056165
+    },
+    {
+      "amount": -20,
+      "hz": 306.4815694996363
+    }
+  ]
+}

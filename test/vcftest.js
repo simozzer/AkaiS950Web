@@ -306,18 +306,28 @@ check('an attack of 70 takes about 1.5 s',
       Audio.vcaEnvelope(kgWith([70, 0, 99, 0]), null, 100).attack.toFixed(2) + 's');
 
 var flatGate = Audio.vcaEnvelope(kgWith([0, 0, 99, 0]), null, 100);
-// A stored 0 is the bottom of the envelope scale rather than a true zero: 1.68 ms, times
-// the attack's own 1.33. Inaudible, and the callers treat anything under 2 ms as a step.
-check('instant attack is instant', flatGate.attack < 0.003,
+// A stored 0 is the bottom of the envelope scale rather than a true zero, and that bottom is
+// now 10.4 ms rather than 1.68. Nothing measures it - no run reaches below stored 50 - so it
+// is the fitted slope carried 50 units down, and it is the softest number in the model: two
+// passes of the same measurement put it at 7.9 ms and then 10.4. Both are about a dozen
+// control blocks, which is a believable shortest ramp for the hardware, and both are a fast
+// de-click rather than the hard step the old figure gave. If a percussive sample ever sounds
+// soft at attack 0, this extrapolation is the first thing to suspect.
+check('instant attack is as good as instant', flatGate.attack < 0.015,
       (flatGate.attack * 1000).toFixed(1) + ' ms');
 check('full sustain holds at full level', Math.abs(flatGate.sustain - 1) < 0.02,
       flatGate.sustain.toFixed(3));
-check('a flat gate has nothing to release', flatGate.release < 0.002);
+// Same story as the attack above: the bottom of the curve is 10.4 ms, not 1.7, so "nothing
+// to release" means one short de-click rather than a hard gate.
+check('a flat gate has as near nothing to release as makes no difference',
+      flatGate.release < 0.015, (flatGate.release * 1000).toFixed(1) + ' ms');
 
 var slow = Audio.vcaEnvelope(kgWith([99, 99, 50, 99]), null, 100);
-// attack runs about 1.6 times slower than decay for the same stored number
-check('a full attack is the top of the scale times ATTACK_SCALE',
-      Math.abs(slow.attack - Audio.CAL.ENV_MAX_MS / 1000 * Audio.CAL.ATTACK_SCALE) < 0.01,
+// The top of the table, times the attack's own scale - which is now 1, so the attack and
+// the decay share one curve. They did not before, and the difference was a constant fitted
+// to reach a measured attack through a curve that turned out to be wrong underneath it.
+check('a full attack is the top of the table times ATTACK_SCALE',
+      Math.abs(slow.attack - Audio.envSeconds(99) * Audio.CAL.ATTACK_SCALE) < 0.01,
       slow.attack.toFixed(2) + ' s');
 check('half sustain is 20 dB down, not half', Math.abs(dbOf(slow.sustain) + 19.7) < 0.5,
       dbOf(slow.sustain).toFixed(1) + ' dB');
@@ -681,15 +691,42 @@ check('a recording with no gaps is refused', refused);
         energy(tail, 1000, RATE / 2).toFixed(4));
 
   /*
-   * And it closes without ringing.
+   * And it closes without the RETUNING ringing - which is not the same as closing quietly.
    *
-   * The fastest release drops the cutoff five and a half octaves in about a millisecond.
-   * Retuning a sixth-order cascade that hard while it keeps its state makes it ring - at a
-   * 64-sample step this peaked at 9.2, ten times full scale, which is a pop and not a filter.
+   * This used to be an absolute bound of 1.0 on the peak, and it passed only because the
+   * model's fastest release was then 1.3 ms: too quick for anything to build. Measured, the
+   * fastest release is 6.1 ms, the sweep now dwells on the sawtooth's harmonics on its way
+   * down, and the peak is 1.4. None of that is a defect - a sixth-order Butterworth's outer
+   * section has a Q of 1.9, and the same 1.4 appears at a block of one and at a sweep three
+   * orders of magnitude slower, where a retuning artefact cannot exist.
+   *
+   * So the test asks the question it was written to ask: does the answer depend on how often
+   * the filter is retuned? A coarse step that agrees with a fine one is integrating the
+   * moving filter properly, whatever the absolute level. That is the check that would have
+   * caught the original pop, and an absolute threshold never was.
    */
   var loudest = 0;
   for (var q = 0; q < snapped.length; q++) loudest = Math.max(loudest, Math.abs(snapped[q]));
-  check('closing fast does not make the filter ring', loudest < 1.0, loudest.toFixed(3));
+
+  var sweepFrom = closing(1.0), sweepTo = Audio.cutoffHz(20, RATE);
+  var fastest = Audio.envSeconds(0) * Audio.CAL.VCF_TIME_SCALE;
+
+  function sweptPeak(blockSize) {
+    var f = Audio.filterWords(words, RATE, function (t) {
+      var u = Math.min(1, t / fastest);
+      return sweepFrom * Math.pow(sweepTo / sweepFrom, u);
+    }, blockSize);
+    var pk = 0;
+    for (var z = 0; z < f.length; z++) pk = Math.max(pk, Math.abs(f[z]));
+    return pk;
+  }
+
+  var coarse = sweptPeak(64), fine = sweptPeak(1);
+  check('retuning coarsely gives the same answer as retuning every sample',
+        coarse < fine * 1.35,
+        coarse.toFixed(2) + ' at a block of 64 against ' + fine.toFixed(2) + ' at 1');
+  check('and the tail stays within a few dB of full scale', loudest < 2.0,
+        loudest.toFixed(3) + ' (a Q of 1.9 sweeping a sawtooth, not an artefact)');
 
   // A keygroup whose envelope has no depth never moves the cutoff, so letting go changes
   // nothing about the filter and the buffer already playing is right.
