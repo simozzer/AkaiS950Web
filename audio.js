@@ -696,6 +696,7 @@ var AkaiAudio = (function () {
     var a = written ? envSeconds(kg.vcf[0]) * CAL.VCF_TIME_SCALE : 0;
     var d = written ? envSeconds(kg.vcf[1]) * CAL.VCF_TIME_SCALE : 0;
     var sustain = written ? clamp(kg.vcf[2], 0, 99) / 99 : 1;
+    var rel = written ? envSeconds(kg.vcf[3]) * CAL.VCF_TIME_SCALE : 0;
     var depth = written ? ((kg.vcfAmount || 0) / 50) * CAL.ENV_OCTAVES : 0;
 
     // The filter is also the reconstruction filter, so its cutoff cannot go above the
@@ -705,15 +706,153 @@ var AkaiAudio = (function () {
     var ceiling = CAL.MAX_RATIO * (sampleRate || 48000);
     var floor = Math.min(CAL.FLOOR_HZ, ceiling);
 
-    return function (t) {
+    /** The envelope while the key is down: attack, decay, then sustain. */
+    function held(t) {
+      if (t < a) return a > 0 ? t / a : 1;
+      if (t < a + d) return d > 0 ? 1 - (1 - sustain) * ((t - a) / d) : sustain;
+      return sustain;
+    }
+
+    /*
+     * `releaseAt` is when the key came up, in seconds from the note starting, or undefined
+     * for a note still held.
+     *
+     * The release runs the envelope's contribution back to nothing in a straight line - the
+     * same shape the decay has - so the filter returns to the keygroup's own cutoff as the
+     * note dies rather than keeping whatever brightness it had when the key was let go. The
+     * level it falls FROM is wherever the envelope had reached, which is why it is read at
+     * the moment of release rather than assumed to be the sustain.
+     */
+    var shape = function (t, releaseAt) {
       var env;
-      if (t < a) env = a > 0 ? t / a : 1;
-      else if (t < a + d) env = d > 0 ? 1 - (1 - sustain) * ((t - a) / d) : sustain;
-      else env = sustain;
+
+      if (releaseAt !== undefined && t >= releaseAt)
+        env = rel > 0.0005
+          ? held(releaseAt) * Math.max(0, 1 - (t - releaseAt) / rel)
+          : 0;
+      else
+        env = held(t);
 
       var hz = base * Math.pow(2, keyShift + velShift + env * depth);
       return hz > ceiling ? ceiling : hz < floor ? floor : hz;
     };
+
+    // Callable as f(t) for a held note, which is what every existing caller does, and the
+    // release time is a second argument for the one caller that has let go.
+    var f = function (t) { return shape(t, undefined); };
+    f.withRelease = function (releaseAt) {
+      return function (t) { return shape(t, releaseAt); };
+    };
+    f.releaseSeconds = rel;
+
+    /// Whether the envelope moves the cutoff at all. If it does not, letting go changes
+    /// nothing about the filter and there is no tail worth rendering.
+    f.moves = written && depth !== 0;
+    return f;
+  }
+
+  /*
+   * The audio a note makes after the key comes up, filtered with the envelope closing.
+   *
+   * The web version bakes the filter into the buffer before the note starts, because a
+   * 6th-order cascade with a moving cutoff is not something Web Audio's nodes will do. That
+   * is fine for attack, decay and sustain, which are all known at the moment the key goes
+   * down - and no use at all for a release, which is not. So the tail is rendered when the
+   * key comes up and spliced on.
+   *
+   * `fromWord` is where playback had reached; `loop` is { from, end } or null, so a looped
+   * note goes on looping while it fades rather than running off the end of the sample.
+   *
+   * THE FILTER STATE
+   *
+   * A filter picked up mid-signal with empty memory clicks. The tail is therefore primed:
+   * the samples leading up to the splice are run through it first and thrown away, so it
+   * arrives holding the same history the buffer it is joining does. A sixth-order section
+   * at the lowest cutoff this machine reaches settles well inside the priming length.
+   */
+  var RELEASE_PRIME = 4096;
+
+  function releaseTail(words, fs, kg, zone, note, velocity, heldFor, fromWord, loop, maxSeconds) {
+    var env = vcfEnvelope(kg, zone, note, velocity, fs);
+
+    // No envelope, or one with no depth, means the cutoff does not move when the key comes
+    // up - so the buffer already playing is right and there is nothing to splice.
+    if (!env.moves) return null;
+
+    /*
+     * The tail lasts as long as the LEVEL does, not as long as the filter's own release.
+     *
+     * Those are different, and getting it wrong is silent truncation: a keygroup with a
+     * filter release of 0 closes its filter in a millisecond and then holds it there for
+     * however long the amplitude takes to fade. Sizing the tail by the filter's release
+     * would end the note after that millisecond.
+     */
+    var seconds = maxSeconds > 0 ? maxSeconds : env.releaseSeconds;
+    if (seconds > 15) seconds = 15;          // a stall on the main thread nobody can hear
+
+    var closing = env.withRelease(heldFor);
+    var count = Math.ceil(seconds * fs) + 1;
+
+    var looping = loop && loop.end > loop.from;
+    var span = looping ? loop.end - loop.from : 0;
+
+    /** The word at `k` places after `fromWord`, following the loop if there is one. */
+    function wordAt(k) {
+      var at = fromWord + k;
+      if (looping && at >= loop.end) at = loop.from + ((at - loop.from) % span);
+      return at >= 0 && at < words.length ? words[at] : 0;
+    }
+
+    var out = new Float32Array(count);
+    var z = [[0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0]];
+
+    // Prime on the run-up, held at the cutoff the note had reached, then render the tail.
+    var steady = butterworth(closing(heldFor), fs);
+
+    for (var p = -RELEASE_PRIME; p < 0; p++) {
+      var xp = wordAt(p) / 2048;
+      for (var sp = 0; sp < 3; sp++) {
+        var cp = steady[sp], stp = z[sp];
+        var yp = cp.b[0] * xp + cp.b[1] * stp[0] + cp.b[2] * stp[1]
+               - cp.a[1] * stp[2] - cp.a[2] * stp[3];
+        stp[1] = stp[0]; stp[0] = xp;
+        stp[3] = stp[2]; stp[2] = yp;
+        xp = yp;
+      }
+    }
+
+    /*
+     * Retuned every eight samples, not every sixty-four.
+     *
+     * A release of 0 is the fastest the machine has - about 1.3 ms - and over that the cutoff
+     * falls five and a half octaves. Moving a sixth-order cascade that far in one step, while
+     * it keeps the state the old coefficients left behind, makes it ring: measured at a
+     * 64-sample block the output peaked at 9.2, nearly ten times full scale, which is a loud
+     * pop rather than a filter closing. Shortening the step is what fixes it -
+     *
+     *     block   64    32    16     8     4     1
+     *     peak   9.19  3.46  0.88  0.80  0.75  0.73
+     *
+     * - and eight is where the curve has flattened, for a fraction of the cost of one.
+     */
+    var block = 8;
+    for (var i = 0; i < count; i += block) {
+      var n = Math.min(block, count - i);
+      var secs = butterworth(closing(heldFor + i / fs), fs);
+
+      for (var j = 0; j < n; j++) {
+        var x = wordAt(i + j) / 2048;
+        for (var s = 0; s < 3; s++) {
+          var c = secs[s], st = z[s];
+          var y = c.b[0] * x + c.b[1] * st[0] + c.b[2] * st[1] - c.a[1] * st[2] - c.a[2] * st[3];
+          st[1] = st[0]; st[0] = x;
+          st[3] = st[2]; st[2] = y;
+          x = y;
+        }
+        out[i + j] = x;
+      }
+    }
+    return out;
   }
 
   /**
@@ -774,6 +913,7 @@ var AkaiAudio = (function () {
     butterworth: butterworth,
     filterWords: filterWords,
     vcfEnvelope: vcfEnvelope,
+    releaseTail: releaseTail,
     vcaEnvelope: vcaEnvelope,
     lfo: lfo,
     LFO: LFO,

@@ -1385,6 +1385,60 @@
    * stopped after it, so a long release rings on the way it does on the machine.
    */
   /** Let one voice go, over its own release. */
+  /*
+   * Swap the sounding buffer for one whose filter is closing.
+   *
+   * The machine's filter envelope has a release: letting go of a key closes the filter back
+   * towards the keygroup's own cutoff while the level fades. This version bakes the filter
+   * into the buffer at note-on, which can say nothing about a moment that has not happened
+   * yet - so the tail is rendered here, when the key actually comes up, and started in place
+   * of the buffer that was playing.
+   *
+   * The join is not a fade. The tail is primed with the samples leading up to it, so the
+   * filter arrives holding the history the old buffer left it with, and the two meet
+   * continuously. Returns true if the swap happened.
+   */
+  function spliceReleaseTail(v, g, at) {
+    var tail = v.tail;
+    if (!tail || !audio || !$('useVcf').checked) return false;
+
+    var heldFor = at - tail.startedAt;
+    if (heldFor < 0) heldFor = 0;
+
+    // where playback had reached, in words, following the loop if there is one
+    var pos = Math.round(heldFor * tail.fs);
+    if (tail.loop && tail.loop.end > tail.loop.from && pos >= tail.loop.end) {
+      var span = tail.loop.end - tail.loop.from;
+      pos = tail.loop.from + ((pos - tail.loop.from) % span);
+    }
+    if (pos >= tail.words.length) return false;
+
+    var samples;
+    try {
+      samples = AkaiAudio.releaseTail(tail.words, tail.fs, tail.kg, tail.zone,
+                                      tail.note, tail.velocity, heldFor, pos, tail.loop,
+                                      v.release + 0.05);
+    } catch (err) { return false; }
+
+    if (!samples || !samples.length) return false;      // no filter release on this keygroup
+
+    try {
+      var buf = audio.createBuffer(1, samples.length, tail.rate);
+      buf.getChannelData(0).set(samples);
+
+      var src = audio.createBufferSource();
+      src.buffer = buf;
+      src.playbackRate.value = tail.speed;
+      src.connect(g);
+      src.start(at);
+
+      v.tailSrc = src;
+      return true;
+    } catch (err) {
+      return false;
+    }
+  }
+
   function releaseVoice(key) {
     var v = voices[key];
     if (!v) return;
@@ -1411,17 +1465,23 @@
         g.gain.exponentialRampToValueAtTime(1e-4, t + v.release);
         g.gain.setValueAtTime(0, t + v.release + 0.001);
 
-        if (src) src.stop(t + v.release + 0.02);
+        // The filter closes as the note dies, which needs the tail rendering now - see
+        // spliceReleaseTail. If there is nothing to splice the buffer plays on as it was.
+        var spliced = spliceReleaseTail(v, g, t);
+
+        if (src) src.stop(spliced ? t : t + v.release + 0.02);
         if (v.osc) v.osc.stop(t + v.release + 0.02);
       } catch (e) {
         try { if (src) src.stop(); } catch (e2) { /* already finished */ }
         try { if (v.osc) v.osc.stop(); } catch (e3) { /* already finished */ }
+        try { if (v.tailSrc) v.tailSrc.stop(); } catch (e4) { /* already finished */ }
       }
       return;
     }
 
     if (v.src) { try { v.src.stop(); } catch (e) { } }
     if (v.osc) { try { v.osc.stop(); } catch (e) { } }
+    if (v.tailSrc) { try { v.tailSrc.stop(); } catch (e) { } }
   }
 
   /** Everything off - what the old single-voice stop() meant. */
@@ -1594,6 +1654,23 @@
     } else {
       src.connect(out());
       voices[key] = { src: src, gain: null, osc: osc, release: 0, at: voiceSeq++ };
+    }
+
+    /*
+     * What the voice needs to render its own filter release when the key comes up.
+     *
+     * The filter is baked into the buffer before the note starts, so the release - which is
+     * not known until the key is let go - has to be rendered then and spliced on. Keeping
+     * these here is what lets releaseVoice do that without going back to the disk.
+     */
+    if (filtered) {
+      voices[key].tail = {
+        words: words, fs: rate * speed, rate: rate, speed: speed,
+        kg: vcf.kg, zone: vcf.zone, note: vcf.note, velocity: vcf.velocity,
+        loop: src.loop ? { from: Math.round(src.loopStart * e.sampleRate),
+                           end:  Math.round(src.loopEnd * e.sampleRate) } : null,
+        startedAt: ac.currentTime
+      };
     }
 
     src.start();

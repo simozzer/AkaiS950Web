@@ -586,6 +586,125 @@ var refused = false;
 try { cal.analyseFile(noGaps); } catch (e) { refused = true; }
 check('a recording with no gaps is refused', refused);
 
+// ---------------------------------------------------------- the filter's release
+//
+// The machine closes the filter back towards the keygroup's own cutoff as a note dies.
+// This version bakes the filter into the buffer before the note starts, so the release
+// has to be rendered when the key comes up and spliced on - which is the part worth
+// holding, because a splice that does not line up is a click.
+
+(function () {
+  var RATE = 44100;
+
+  // A keygroup nearly shut, with the envelope opening it wide and holding it there, so
+  // letting go has somewhere to fall from.
+  var kg = {
+    vcf: [0, 99, 99, 60],          // attack, decay, sustain, release
+    vcfAmount: 50,
+    vcfWritten: true,
+    keyToFilter: 0,
+    velToFilter: 0
+  };
+  var zone = { filter: 20 };
+
+  // a sawtooth, which has harmonics for the filter to take away
+  var words = new Int16Array(RATE * 2);
+  for (var i = 0; i < words.length; i++) words[i] = ((i % 120) / 120) * 4000 - 2000;
+
+  var env = Audio.vcfEnvelope(kg, zone, 60, 100, RATE);
+  check('the release time comes off the fourth byte', env.releaseSeconds > 0.3,
+        env.releaseSeconds.toFixed(2) + 's');
+
+  // Held, the envelope sits open; released, it falls back to the keygroup's own cutoff.
+  var closing = env.withRelease(1.0);
+  var open = closing(1.0);
+  var shut = closing(1.0 + env.releaseSeconds + 0.01);
+  var base = Audio.cutoffHz(20, RATE);
+
+  check('the filter is open while the key is held', open > base * 4,
+        open.toFixed(0) + ' Hz against a base of ' + base.toFixed(0));
+  check('and falls back to the keygroup cutoff after the release',
+        Math.abs(shut - base) < base * 0.02, shut.toFixed(0) + ' Hz vs ' + base.toFixed(0));
+  check('the fall is gradual, not a step',
+        closing(1.0 + env.releaseSeconds / 2) < open * 0.9 &&
+        closing(1.0 + env.releaseSeconds / 2) > shut * 1.1);
+
+  // The tail itself: it must start where the held buffer left off, or the join clicks.
+  var held = Audio.applyVcf(words, RATE, kg, zone, 60, 100);
+  var at = Math.round(1.0 * RATE);
+
+  var tail = Audio.releaseTail(words, RATE, kg, zone, 60, 100, 1.0, at, null, 2.0);
+
+  // Long enough to carry the LEVEL out, not merely the filter's own release - a filter
+  // that has finished closing still has to keep making sound while the note fades.
+  check('the tail lasts as long as the level was asked for',
+        tail && Math.abs(tail.length - RATE * 2.0) < RATE * 0.02,
+        tail ? (tail.length / RATE).toFixed(2) + 's of a requested 2.00s' : 'none');
+
+  /*
+   * The join. The tail is primed with the run-up so its filter carries the same history
+   * the buffer it replaces does; without that priming this step is the click.
+   *
+   * Compared against the steps the signal makes on its own, because a sawtooth is nothing
+   * but steps and an absolute threshold would say nothing.
+   */
+  var ordinary = 0;
+  for (var k = at + 1; k < at + 2000; k++)
+    ordinary = Math.max(ordinary, Math.abs(held[k] - held[k - 1]));
+
+  var step = Math.abs(tail[0] - held[at - 1]);
+  check('the tail joins without a step', step < ordinary * 1.5,
+        step.toFixed(4) + ' against the waveform\'s own ' + ordinary.toFixed(4));
+
+  /*
+   * A release byte of zero is not "no release" - it is the filter snapping shut at once and
+   * staying there while the level fades, which the held buffer does NOT sound like. So it
+   * still gets a tail, and that tail is dark all the way through.
+   */
+  var snap = { vcf: [0, 99, 99, 0], vcfAmount: 50, vcfWritten: true,
+               keyToFilter: 0, velToFilter: 0 };
+  var snapped = Audio.releaseTail(words, RATE, snap, zone, 60, 100, 1.0, at, null, 2.0);
+
+  function energy(x, from, to) {
+    var s = 0;
+    for (var i = from; i < to; i++) s += x[i] * x[i];
+    return Math.sqrt(s / (to - from));
+  }
+
+  check('a release of zero still gets a tail', snapped && snapped.length > RATE,
+        snapped ? snapped.length + ' samples' : 'none');
+
+  // Past the first few milliseconds it is shut, where the gradual one is still open.
+  check('and that tail is shut once it has closed',
+        energy(snapped, 1000, RATE / 2) < energy(tail, 1000, RATE / 2) * 0.9,
+        energy(snapped, 1000, RATE / 2).toFixed(4) + ' against ' +
+        energy(tail, 1000, RATE / 2).toFixed(4));
+
+  /*
+   * And it closes without ringing.
+   *
+   * The fastest release drops the cutoff five and a half octaves in about a millisecond.
+   * Retuning a sixth-order cascade that hard while it keeps its state makes it ring - at a
+   * 64-sample step this peaked at 9.2, ten times full scale, which is a pop and not a filter.
+   */
+  var loudest = 0;
+  for (var q = 0; q < snapped.length; q++) loudest = Math.max(loudest, Math.abs(snapped[q]));
+  check('closing fast does not make the filter ring', loudest < 1.0, loudest.toFixed(3));
+
+  // A keygroup whose envelope has no depth never moves the cutoff, so letting go changes
+  // nothing about the filter and the buffer already playing is right.
+  var flat = { vcf: [0, 99, 99, 60], vcfAmount: 0, vcfWritten: true,
+               keyToFilter: 0, velToFilter: 0 };
+  check('an envelope with no depth has no tail',
+        Audio.releaseTail(words, RATE, flat, zone, 60, 100, 1.0, at, null, 2.0) === null);
+
+  // An S900 programme has no filter envelope at all, so nothing to release.
+  var s900 = { vcf: [32, 32, 32, 32], vcfAmount: 0, vcfWritten: false,
+               keyToFilter: 0, velToFilter: 0 };
+  check('an unwritten filter envelope has no release',
+        Audio.releaseTail(words, RATE, s900, zone, 60, 100, 1.0, at, null, 2.0) === null);
+}());
+
 console.log('');
 console.log(problems.length ? problems.length + ' FAILED' : 'all checks passed');
 if (problems.length) process.exit(1);
