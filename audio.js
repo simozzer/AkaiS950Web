@@ -545,22 +545,69 @@ var AkaiAudio = (function () {
       [99, 10.7401]
     ],
 
-    // The VCA attack against the shared curve. One, within the measurement.
-    //
-    // It was 1.33, which is what it took to reach the measured attack at stored 70 when the
-    // curve underneath was the old one. The curve has moved, and at stored 70 the new curve
-    // alone lands on that same measurement.
-    //
-    // It is the weakest number here. Stored 85 says the VCA attack reaches full in 2.1 s
-    // where this gives 4.04, so the attack's curve is flatter than the shared one and no
-    // single multiplier can express that. It wants a run of its own, with the level driven
-    // well clear of the noise so the whole ramp is visible.
-    ATTACK_SCALE: 1.0,    // measured: attack 70 reaches full at about 1.5 s
+    /*
+     * The VCA attack is a counter, and this is how long it takes at one step per tick.
+     *
+     * It was ATTACK_SCALE - a single multiplier on the shared envelope curve - and no
+     * multiplier can be right, because the attack does not follow that curve and does not
+     * follow any smooth curve at all. Thirteen settings measured on the hardware:
+     *
+     *     stored     30    40    50    55    60    65    70    75    80    85  90  95  99
+     *     seconds  .209  .362  .603  .766  .906 1.081 1.350 1.350 1.796 1.797 2.70 2.70 2.70
+     *     5.4 / n    26    15     9     7     6     5     4     4     3     3   2   2   2
+     *
+     * Every one of them is 5.4/n for a whole number n, to within 0.7%. That is not a fit, it
+     * is the mechanism: an envelope counter adding n units a tick across a fixed span. It is
+     * also why stored 70 and 75 come back identical to four digits, and 80 and 85, and 90, 95
+     * and 99 - they share an n. And it is why the attack STOPS getting slower at 2.70 s: n
+     * bottoms out at 2, where the shared curve wanted 10.74 s at stored 99.
+     *
+     * Only the VCA attack is known to do this. The filter attack was measured in an earlier
+     * run to about 5%, too coarse to see a 0.7% quantisation, so it keeps the shared curve -
+     * not because it is smooth but because nothing has looked.
+     */
+    VCA_ATTACK_SPAN: 5.4,
+
+    /*
+     * How many units a tick, by stored byte. The measured points are exact; between them n is
+     * interpolated and rounded, so each whole number gets its own stretch of the range.
+     *
+     * Below stored 30 nothing is measured: the entry at 0 continues the slope from 30 to 40
+     * and puts the shortest attack at 40 ms, which is the softest number here and the one to
+     * suspect if a percussive sample sounds slow at attack 0.
+     */
+    VCA_ATTACK_STEPS: [
+      [0, 134], [30, 26], [40, 15], [50, 9], [55, 7], [60, 6], [65, 5],
+      [70, 4], [75, 4], [80, 3], [85, 3], [90, 2], [95, 2], [99, 2]
+    ],
 
     // The filter's envelope runs quicker than the VCA's for the same stored number:
     // decay 80 reached the base in 2.25 s against the VCA's 2.86. One measurement each,
     // so provisional - but a measurement, where sharing the VCA's scale was a guess.
     VCF_TIME_SCALE: 0.78, // measured: 2.25 s against the VCA's 2.86
+
+    /*
+     * THE RELEASE IS A RATE, NOT A DURATION.
+     *
+     * The release byte sets how fast the envelope falls, not how long it takes to get there,
+     * so a release from half depth is over in half the time. This used to do the opposite for
+     * the filter - fall from wherever you are TO ZERO over the release time, which makes a
+     * shallow release crawl - while doing the right thing for the amplitude in the same
+     * voice. One generator, two rules, neither measured.
+     *
+     * Nothing caught it because every release ever measured started from a sustain of 99 and
+     * fell the whole depth, which is the one case where the two agree. Three sustains at one
+     * release setting separate them:
+     *
+     *     depth        2.04 oct   1.24 oct   0.72 oct
+     *     measured       3.13 s     1.88 s     1.13 s
+     *     a rate         3.15       1.91       1.11
+     *     a duration     3.15       3.15       3.15
+     *
+     * Within 2% of a rate at every depth. Nothing measured before it changes: at full depth
+     * the two rules agree, and every earlier release measurement was taken there.
+     */
+    RELEASE_IS_A_RATE: true,
 
 
     // Sustain is NOT a fraction of the amplitude. A stored 50 measured 19.7 dB down,
@@ -708,6 +755,32 @@ var AkaiAudio = (function () {
   }
 
   /**
+   * The VCA attack in seconds, from CAL.VCA_ATTACK_STEPS.
+   *
+   * The count is interpolated in the log and then rounded to a whole number, because a
+   * counter can only add whole units - so the answer steps, and steps widely at the top where
+   * n is 4, 3, 2. That is the machine: two settings sharing an n really do give the same
+   * attack to four digits.
+   */
+  function vcaAttackSeconds(stored) {
+    var S = CAL.VCA_ATTACK_STEPS;
+    var v = clamp(stored, 0, 99);
+    var steps = S[S.length - 1][1];
+
+    for (var i = 1; i < S.length; i++) {
+      if (v > S[i][0]) continue;
+
+      var lo = S[i - 1][1], hi = S[i][1];
+      var span = S[i][0] - S[i - 1][0];
+      var t = span === 0 ? 0 : (v - S[i - 1][0]) / span;
+      steps = lo * Math.pow(hi / lo, t);
+      break;
+    }
+
+    return CAL.VCA_ATTACK_SPAN / Math.max(2, Math.round(steps));
+  }
+
+  /**
    * The three biquad sections of a 6th-order Butterworth low-pass, as
    * { b: [b0,b1,b2], a: [1,a1,a2] } with the coefficients already normalised.
    */
@@ -825,9 +898,12 @@ var AkaiAudio = (function () {
     var shape = function (t, releaseAt) {
       var env;
 
+      // A fixed RATE, not a fixed time: the release byte sets how fast the envelope falls,
+      // so a release from half depth is over in half the time. Measured three ways at three
+      // sustains - see the note beside VCF_TIME_SCALE.
       if (releaseAt !== undefined && t >= releaseAt)
         env = rel > 0.0005
-          ? held(releaseAt) * Math.max(0, 1 - (t - releaseAt) / rel)
+          ? Math.max(0, held(releaseAt) - (t - releaseAt) / rel)
           : 0;
       else
         env = held(t);
@@ -991,7 +1067,7 @@ var AkaiAudio = (function () {
     var sustainDb = -(1 - clamp(kg.vca[2], 0, 99) / 99) * CAL.SUSTAIN_DB;
 
     return {
-      attack: envSeconds(kg.vca[0]) * CAL.ATTACK_SCALE,
+      attack: vcaAttackSeconds(kg.vca[0]),
       decay: envSeconds(kg.vca[1]),
       sustain: dbToGain(sustainDb),
       release: envSeconds(kg.vca[3]),
@@ -1018,6 +1094,7 @@ var AkaiAudio = (function () {
     CAL: CAL,
     cutoffHz: cutoffHz,
     envSeconds: envSeconds,
+    vcaAttackSeconds: vcaAttackSeconds,
     butterworth: butterworth,
     filterWords: filterWords,
     vcfEnvelope: vcfEnvelope,

@@ -306,15 +306,19 @@ check('an attack of 70 takes about 1.5 s',
       Audio.vcaEnvelope(kgWith([70, 0, 99, 0]), null, 100).attack.toFixed(2) + 's');
 
 var flatGate = Audio.vcaEnvelope(kgWith([0, 0, 99, 0]), null, 100);
-// A stored 0 is the bottom of the envelope scale rather than a true zero, and that bottom is
-// now 10.4 ms rather than 1.68. Nothing measures it - no run reaches below stored 50 - so it
-// is the fitted slope carried 50 units down, and it is the softest number in the model: two
-// passes of the same measurement put it at 7.9 ms and then 10.4. Both are about a dozen
-// control blocks, which is a believable shortest ramp for the hardware, and both are a fast
-// de-click rather than the hard step the old figure gave. If a percussive sample ever sounds
-// soft at attack 0, this extrapolation is the first thing to suspect.
-check('instant attack is as good as instant', flatGate.attack < 0.015,
-      (flatGate.attack * 1000).toFixed(1) + ' ms');
+/*
+ * A stored 0 attack is 40 ms, and it is the least trustworthy number in the model.
+ *
+ * The attack counter was measured at thirteen settings from stored 30 up; below 30 there is
+ * nothing at all. 40 ms is the slope from 30 to 40 carried thirty units further down, and a
+ * counter has to stop incrementing somewhere, so the truth could be anywhere between a few
+ * milliseconds and this. That range is the difference between a hard step and an audible
+ * softening on every percussive sample in the library - so if drums sound slow at attack 0,
+ * look here first. One short run over stored 0 to 30 would settle it.
+ */
+check('the shortest attack is the counter extrapolated, and says so',
+      flatGate.attack > 0.02 && flatGate.attack < 0.06,
+      (flatGate.attack * 1000).toFixed(1) + ' ms - EXTRAPOLATED, nothing measures below 30');
 check('full sustain holds at full level', Math.abs(flatGate.sustain - 1) < 0.02,
       flatGate.sustain.toFixed(3));
 // Same story as the attack above: the bottom of the curve is 10.4 ms, not 1.7, so "nothing
@@ -326,9 +330,13 @@ var slow = Audio.vcaEnvelope(kgWith([99, 99, 50, 99]), null, 100);
 // The top of the table, times the attack's own scale - which is now 1, so the attack and
 // the decay share one curve. They did not before, and the difference was a constant fitted
 // to reach a measured attack through a curve that turned out to be wrong underneath it.
-check('a full attack is the top of the table times ATTACK_SCALE',
-      Math.abs(slow.attack - Audio.envSeconds(99) * Audio.CAL.ATTACK_SCALE) < 0.01,
-      slow.attack.toFixed(2) + ' s');
+// The attack saturates: 90, 95 and 99 all share n = 2, and the hardware returns all three
+// identical to four digits. The shared envelope curve wanted 10.74 s at stored 99.
+check('a full attack saturates at 5.4/2, not at the top of the envelope curve',
+      Math.abs(slow.attack - 2.7) < 0.01 &&
+      Math.abs(Audio.vcaAttackSeconds(90) - Audio.vcaAttackSeconds(99)) < 1e-9,
+      slow.attack.toFixed(2) + ' s, where the curve asks for ' +
+      Audio.envSeconds(99).toFixed(1) + ' s');
 check('half sustain is 20 dB down, not half', Math.abs(dbOf(slow.sustain) + 19.7) < 0.5,
       dbOf(slow.sustain).toFixed(1) + ' dB');
 check('release follows the decay scale, not the attack one',
@@ -336,13 +344,35 @@ check('release follows the decay scale, not the attack one',
       slow.release.toFixed(2) + 's release, ' + slow.decay.toFixed(2) + 's decay');
 
 // times must rise with the stored value, and never be negative
-var rising = true, lastT = -1;
+/*
+ * The attack never gets shorter as the byte rises - but it does not always get longer.
+ *
+ * It is a counter: the time is 5.4/n for a whole number n, so neighbouring settings that
+ * share an n give the same attack, and the hardware returns them identical to four digits.
+ * Asking for a strictly rising sequence was asking the model to be smoother than the machine.
+ */
+var falls = 0, same = 0, lastT = -1;
 for (var v = 0; v <= 99; v++) {
   var t = Audio.vcaEnvelope(kgWith([v, 0, 99, 0]), null, 100).attack;
-  if (t <= lastT || t < 0) rising = false;
+  if (t < lastT - 1e-9) falls++;
+  else if (Math.abs(t - lastT) < 1e-9) same++;
   lastT = t;
 }
-check('attack time rises with the stored value', rising);
+check('attack time never gets shorter as the byte rises', falls === 0,
+      falls + ' settings went backwards');
+check('and it steps rather than sliding, because it is a counter', same > 40,
+      same + ' of 99 settings share an attack with the one below');
+
+// 5.4/n for whole n, which is what the hardware gives to within 0.7%
+var counts = {};
+for (var v2 = 0; v2 <= 99; v2++) {
+  var n = Audio.CAL.VCA_ATTACK_SPAN / Audio.vcaAttackSeconds(v2);
+  counts[Math.round(n)] = true;
+  if (Math.abs(n - Math.round(n)) > 1e-9) counts.bad = true;
+}
+check('every attack is the span over a whole number of steps', !counts.bad);
+check('and the slowest is 5.4/2', Math.abs(Audio.vcaAttackSeconds(99) - 2.7) < 1e-9,
+      Audio.vcaAttackSeconds(99).toFixed(3) + 's');
 
 // velocity: full velocity is full level whatever the depth, and a soft note is quieter
 // only when the keygroup asks for it
