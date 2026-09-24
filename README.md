@@ -91,6 +91,8 @@ under the envelopes it modulates. **Both zones and the flags** make the third co
 - Hovering a key names it and gives its MIDI number
 - Clicking a key plays the keygroup's sample **at that key's pitch**, using the same
   varispeed the sampler does
+- A velocity strip on the right of the keyboard row sets how hard that click strikes,
+  which is most of what the filter hears
 - Honours loop points on playback — a looping sample sustains rather than stopping,
   which the WinForms version cannot do
 - Adds samples from any audio file the browser can decode, converted to Akai 12-bit
@@ -228,6 +230,7 @@ Everything that checks the app, or was used to work the format out, lives beside
 | `slicetest.js` | slices a break on every image with room for it |
 | `imgtest.js` | converts every image to raw `.img` and checks nothing is lost |
 | `looptest.js` | the loop finder, against the loops the library shipped with |
+| `veltest.js` | velocity moving the cutoff, and agreeing with the desktop version on where it lands |
 | `wavtest.js` | the WAV export on every sample: chunk structure, and the loop landing where the player puts it |
 | `copytest.js` | copying across every pair of disks: what arrives, and that nothing already on the target moved |
 | `keygrouptest.js` | copying one keygroup onto another program, across disks and within one |
@@ -413,6 +416,34 @@ name.
 **Sample operations**, on the waveform pane: **Trim silence**, **Halve rate**, **Fit to tempo**
 (WSOLA time stretch, pitch preserved), **Find loop**, and **Rename** on the file heading —
 which retargets every keygroup zone that named the sample.
+
+### How hard the keyboard strikes
+
+The strip on the right of the keyboard row sets the velocity a click carries, 1 to 127,
+and it matters more than it looks. Velocity opens the filter: at the measured 8.34 octaves
+across the full range the pivot is 65, so the fixed strike of 100 both programs used to
+play sat about 1.2 octaves above it. On a programme written with any velocity-to-filter at
+all, that is the difference between hearing the filter and not. It lifts the level too, at
+0.63 dB per step, so a softer strike is quieter as well as darker.
+
+It still starts at 100, so nothing sounds different until the strip is moved. MIDI input
+was always given the real velocity and is unchanged.
+
+`veltest.js` checks that velocity moves the cutoff, that it moves the right way, and that
+this version and the desktop one land on the same frequency for the same strike - they are
+the same instrument or they are not.
+
+### A filter that seems to do nothing
+
+If it does, the programme is probably written wide open rather than the filter being
+broken. The cutoff ceiling is `0.37 x the rate the audio leaves at` - the filter is also
+the reconstruction filter - and the curve reaches it well before the stored value reaches
+99. A sample played well below its root has a correspondingly low ceiling: pitched down
+two octaves, a ceiling of 1500 Hz is all there is, and any stored value from about 50
+upward is already sitting on it.
+
+So a filter that will not close is usually a programme whose stored cutoff is above its
+own ceiling, and the fix is a lower stored value rather than a louder complaint.
 
 ### Copying between disks
 

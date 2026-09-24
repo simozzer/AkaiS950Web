@@ -2427,7 +2427,7 @@
     if (sel.entry && sel.entry.type === 'P' && selKeygroup >= 0) {
       var kgs = sel.disk.keygroups(sel.entry);
       var kg = kgs[selKeygroup];
-      if (kg) vcf = { kg: kg, zone: kg.zone1, note: kg.lowKey, velocity: 100 };
+      if (kg) vcf = { kg: kg, zone: kg.zone1, note: kg.lowKey, velocity: strikeVelocity() };
     }
     play(sel.disk, waveEntry, 0, $('useLoop').checked, vcf);
   };
@@ -2467,11 +2467,34 @@
 
     var shift = pitchFor(s, kg, zone, note);
     play(sel.disk, s, shift, $('useLoop').checked,
-         { kg: kg, zone: zone, note: note, velocity: 100 });
+         { kg: kg, zone: zone, note: note, velocity: strikeVelocity() });
     say('Playing ' + s.name + ' at ' + Akai.noteName(note) + '  -  ' +
         (shift >= 0 ? '+' : '') + shift.toFixed(2) + ' semitones' +
         (kg.constantPitch ? '  (constant pitch)' : ''));
   });
+
+  /*
+   * How hard the keyboard strikes.
+   *
+   * It used to be a fixed 100, which is not a neutral choice: velocity opens the filter,
+   * and at the measured 8.34 octaves across the range with a pivot of 65, a strike of 100
+   * sits about 1.2 octaves above it. On a programme written with any velocity-to-filter at
+   * all that is the difference between hearing the filter and not. It lifts the level too,
+   * 0.63 dB per step, so a softer strike is quieter as well as darker.
+   */
+  function strikeVelocity() {
+    var v = parseInt($('velocity').value, 10);
+    return v >= 1 && v <= 127 ? v : 100;
+  }
+
+  $('velocity').oninput = function () {
+    $('velocityVal').textContent = strikeVelocity();
+  };
+
+  $('velocity').onchange = function () {
+    say('Keyboard velocity ' + strikeVelocity() +
+        '  -  a softer strike closes the filter, a harder one opens it.');
+  };
 
   $('undo').onclick = function () { step(undoStack, redoStack, 'Undid'); };
   $('redo').onclick = function () { step(redoStack, undoStack, 'Redid'); };

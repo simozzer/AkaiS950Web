@@ -208,7 +208,17 @@
            beside it. The list is a column of numbers because every other column of it
            was a worse copy of a field in the property grid. -->
       <div id="kgWrap" hidden>
-        <canvas id="piano"></canvas>
+        <!-- The keyboard, and on the right of the same row how hard it strikes.
+             Velocity opens the filter - 8.34 octaves across the full range, pivoting
+             at 65 - so a fixed strike hides most of what the filter does. -->
+        <div class="keyrow">
+          <canvas id="piano"></canvas>
+          <div class="velstrip" title="How hard the keyboard strikes, 1 to 127. Velocity opens the filter and lifts the level a little, so a softer strike is a darker, quieter note.">
+            <input type="range" id="velocity" min="1" max="127" value="100"
+                   aria-label="Keyboard velocity">
+            <span id="velocityVal">100</span>
+          </div>
+        </div>
 
         <div id="kgLayout">
           <div id="kgList">

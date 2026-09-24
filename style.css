@@ -90,7 +90,8 @@ nav .item.away { color: var(--warm); }
 #scroll { flex: 1; min-height: 0; overflow: auto; padding: 10px 20px 28px; }
 /* the keyboard is the first thing in the pane, and a margin on top of the pane padding
    pushed it a long way down a short screen */
-#kgWrap > canvas:first-child { margin-top: 0; }
+#kgWrap > canvas:first-child,
+#kgWrap > .keyrow:first-child { margin-top: 0; }
 
 /* docked, so the waveform is always to hand while the rest scrolls */
 #waveWrap {
@@ -121,6 +122,25 @@ table { border-collapse: collapse; width: 100%; font-size: 13px; }
    the backing store from the device pixel ratio, and reading that back as the
    layout size would compound it on every resize. */
 canvas { display: block; width: 100%; background: var(--panel); border: 1px solid var(--line); }
+/* The keyboard and its velocity strip in one row, the same shape as the waveform and
+   its transport below. The canvas takes whatever is left. */
+.keyrow { display: flex; align-items: stretch; gap: 10px; margin-bottom: 10px; }
+.keyrow canvas { flex: 1; min-width: 0; margin-bottom: 0; }
+
+.velstrip { flex: none; width: 26px; display: flex; flex-direction: column;
+            align-items: center; gap: 3px; }
+
+/* vertical-lr with rtl is what puts the maximum at the TOP, the way a fader reads;
+   slider-vertical is the older spelling, left in for anything that still wants it. */
+.velstrip input[type="range"] {
+  writing-mode: vertical-lr;
+  direction: rtl;
+  -webkit-appearance: slider-vertical;
+  appearance: slider-vertical;
+  width: 20px; flex: 1; margin: 0; padding: 0; cursor: pointer;
+}
+.velstrip span { font-size: 10px; color: var(--muted); line-height: 1; }
+
 #piano { height: 96px; margin-bottom: 10px; }
 #wave { height: 150px; }
 
