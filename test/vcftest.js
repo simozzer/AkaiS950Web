@@ -307,18 +307,24 @@ check('an attack of 70 takes about 1.5 s',
 
 var flatGate = Audio.vcaEnvelope(kgWith([0, 0, 99, 0]), null, 100);
 /*
- * A stored 0 attack is 40 ms, and it is the least trustworthy number in the model.
+ * Attack 0 is a hard gate, and has to be: it is what gating a drum means.
  *
- * The attack counter was measured at thirteen settings from stored 30 up; below 30 there is
- * nothing at all. 40 ms is the slope from 30 to 40 carried thirty units further down, and a
- * counter has to stop incrementing somewhere, so the truth could be anywhere between a few
- * milliseconds and this. That range is the difference between a hard step and an audible
- * softening on every percussive sample in the library - so if drums sound slow at attack 0,
- * look here first. One short run over stored 0 to 30 would settle it.
+ * Not measured - nothing in any run reaches below stored 30 - but that is how envelope
+ * generators are built, the bottom of the range being no attack stage rather than a very
+ * short one. The counter says the same thing in its own terms: an increment that covers the
+ * whole span arrives on the first tick, and a ramp that finishes inside one control block is
+ * a step.
+ *
+ * This used to be 40 ms, from carrying the slope between stored 30 and 40 thirty units
+ * further down. That is a long way to extrapolate, and it cost the one thing the setting
+ * exists for.
  */
-check('the shortest attack is the counter extrapolated, and says so',
-      flatGate.attack > 0.02 && flatGate.attack < 0.06,
-      (flatGate.attack * 1000).toFixed(1) + ' ms - EXTRAPOLATED, nothing measures below 30');
+check('attack 0 is a hard gate, not a fast ramp', flatGate.attack === 0,
+      (flatGate.attack * 1000).toFixed(1) + ' ms');
+check('and the gate does not swallow settings that should ramp',
+      Audio.vcaAttackSeconds(5) > 0.001 && Audio.vcaAttackSeconds(30) > 0.2,
+      'stored 5 is ' + (Audio.vcaAttackSeconds(5) * 1000).toFixed(1) + ' ms, stored 30 is ' +
+      Audio.vcaAttackSeconds(30).toFixed(3) + ' s');
 check('full sustain holds at full level', Math.abs(flatGate.sustain - 1) < 0.02,
       flatGate.sustain.toFixed(3));
 // Same story as the attack above: the bottom of the curve is 10.4 ms, not 1.7, so "nothing
@@ -364,13 +370,15 @@ check('and it steps rather than sliding, because it is a counter', same > 40,
       same + ' of 99 settings share an attack with the one below');
 
 // 5.4/n for whole n, which is what the hardware gives to within 0.7%
-var counts = {};
+var bad = 0;
 for (var v2 = 0; v2 <= 99; v2++) {
-  var n = Audio.CAL.VCA_ATTACK_SPAN / Audio.vcaAttackSeconds(v2);
-  counts[Math.round(n)] = true;
-  if (Math.abs(n - Math.round(n)) > 1e-9) counts.bad = true;
+  var s = Audio.vcaAttackSeconds(v2);
+  if (s === 0) continue;                       // gated: the counter arrives in one tick
+  var n = Audio.CAL.VCA_ATTACK_SPAN / s;
+  if (Math.abs(n - Math.round(n)) > 1e-9) bad++;
 }
-check('every attack is the span over a whole number of steps', !counts.bad);
+check('every attack that ramps is the span over a whole number of steps', bad === 0,
+      bad + ' were not');
 check('and the slowest is 5.4/2', Math.abs(Audio.vcaAttackSeconds(99) - 2.7) < 1e-9,
       Audio.vcaAttackSeconds(99).toFixed(3) + 's');
 

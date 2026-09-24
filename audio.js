@@ -569,15 +569,34 @@ var AkaiAudio = (function () {
     VCA_ATTACK_SPAN: 5.4,
 
     /*
+     * An attack this short is a step, and is rendered as one.
+     *
+     * A counter whose increment covers the whole span arrives on the first tick, so there is
+     * no ramp left to render and the right answer is zero rather than a very small number. A
+     * millisecond is well inside one control block.
+     *
+     * This is what makes attack 0 a hard gate. That is not a measurement - nothing in any run
+     * reaches below stored 30 - it is how envelope generators are built. The bottom of an
+     * attack range means no attack stage at all rather than a very short one, and a sampler
+     * that could not gate a drum would be the exception rather than the rule.
+     *
+     * The only thing that ever argued otherwise was an extrapolation: the slope from stored
+     * 30 to 40, carried thirty units down, put stored 0 at 40 ms - a soft attack on every
+     * percussive sample there is. A guess reaching that far loses to how the things are made.
+     */
+    VCA_ATTACK_GATE: 0.001,
+
+    /*
      * How many units a tick, by stored byte. The measured points are exact; between them n is
      * interpolated and rounded, so each whole number gets its own stretch of the range.
      *
-     * Below stored 30 nothing is measured: the entry at 0 continues the slope from 30 to 40
-     * and puts the shortest attack at 40 ms, which is the softest number here and the one to
-     * suspect if a percussive sample sounds slow at attack 0.
+     * Below stored 30 nothing is measured. The entry at 0 is the count that crosses
+     * VCA_ATTACK_GATE, so stored 0 and 1 are steps and the ramp climbs from about a
+     * millisecond at 2 to the measured 0.209 s at 30. That shape is a guess; that the two
+     * ends of it are a gate and 0.209 s is not.
      */
     VCA_ATTACK_STEPS: [
-      [0, 134], [30, 26], [40, 15], [50, 9], [55, 7], [60, 6], [65, 5],
+      [0, 7000], [30, 26], [40, 15], [50, 9], [55, 7], [60, 6], [65, 5],
       [70, 4], [75, 4], [80, 3], [85, 3], [90, 2], [95, 2], [99, 2]
     ],
 
@@ -777,7 +796,8 @@ var AkaiAudio = (function () {
       break;
     }
 
-    return CAL.VCA_ATTACK_SPAN / Math.max(2, Math.round(steps));
+    var seconds = CAL.VCA_ATTACK_SPAN / Math.max(2, Math.round(steps));
+    return seconds < CAL.VCA_ATTACK_GATE ? 0 : seconds;
   }
 
   /**
