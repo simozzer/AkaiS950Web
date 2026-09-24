@@ -504,6 +504,7 @@
     $('infoBar').hidden = false;
     $('fileOps').hidden = !(e.type === 'P' || e.type === 'S');
     $('opDelete').hidden = !(e.type === 'S' || e.type === 'P');
+    fillCopyTo(d, e);
 
     if (e.type === 'S') {
       t.textContent = '';
@@ -569,6 +570,7 @@
     $('kgCount').textContent = '- ' + kgs.length;
     $('kgAdd').disabled = kgs.length >= Akai.MAX_KEYGROUPS;
     $('kgDel').disabled = true;
+    $('kgCopy').disabled = true;
 
     // a program the selection outlived - a delete, or an undo of an add
     selSet = selSet.filter(function (i) { return i < kgs.length; });
@@ -626,6 +628,10 @@
     }
 
     $('kgDel').disabled = kgs.length <= selSet.length;
+
+    // One at a time: copying a run of keygroups is a different question, and answering it
+    // badly here would be worse than not answering it.
+    $('kgCopy').disabled = selKeygroup < 0;
     drawPiano();
     showKeygroupEditor(kgs[i], i);
 
@@ -2245,6 +2251,147 @@
 
   // The whole selection goes, highest first, so the indices below each delete still
   // point where they did when the list was drawn.
+  // ------------------------------------------- copying a keygroup to a program
+
+  var kgCopyFrom = null;        // { disk, program, index } while the chooser is open
+
+  /*
+   * Copy one keygroup onto another program, here or on another open disk.
+   *
+   * The chooser lists every program that is open except the one being copied from -
+   * copying a keygroup onto its own program is what Add already does.
+   */
+  $('kgCopy').onclick = function () {
+    if (!sel || !sel.entry || sel.entry.type !== 'P' || selKeygroup < 0) return;
+
+    kgCopyFrom = { disk: sel.disk, program: sel.entry, index: selKeygroup };
+
+    var pick = $('kgTarget');
+    pick.innerHTML = '';
+
+    disks.forEach(function (d, di) {
+      d.entries.filter(function (e) { return e.type === 'P'; }).forEach(function (p) {
+        if (d === sel.disk && p.slot === sel.entry.slot) return;
+
+        var o = document.createElement('option');
+        o.value = di + ':' + p.slot;
+        o.textContent = d.name.replace(/\.(hfe|img)$/i, '') + '      ' + p.name.trim() +
+                        '   (' + d.keygroupCount(p) + ' keygroups)';
+        pick.appendChild(o);
+      });
+    });
+
+    if (!pick.options.length) {
+      say('There is no other program to copy it into. Create one, or open another disk image.');
+      kgCopyFrom = null;
+      return;
+    }
+
+    pick.selectedIndex = 0;
+
+    $('kgSource').textContent =
+      'Keygroup ' + (selKeygroup + 1) + ' of ' + sel.entry.name.trim() +
+      ' on ' + sel.disk.name.replace(/\.(hfe|img)$/i, '');
+
+    kgPreview();
+    $('kgDlg').showModal();
+  };
+
+  $('kgTarget').onchange = kgPreview;
+  $('kgCancel').onclick = function () { $('kgDlg').close(); kgCopyFrom = null; };
+
+  /** Which program the chooser is pointing at, or null. */
+  function kgChosen() {
+    var pick = $('kgTarget');
+    if (!kgCopyFrom || pick.selectedIndex < 0) return null;
+
+    var bits = pick.value.split(':');
+    var d = disks[parseInt(bits[0], 10)];
+    if (!d) return null;
+
+    var p = d.entryInSlot(parseInt(bits[1], 10));
+    return p && p.type === 'P' ? { disk: d, program: p } : null;
+  }
+
+  /** What the copy would cost, shown before it is made rather than after. */
+  function kgPreview() {
+    var into = kgChosen();
+    if (!into) { $('kgSummary').textContent = ''; return; }
+
+    var plan;
+    try {
+      plan = into.disk.planCopyKeygroup(
+        kgCopyFrom.disk, kgCopyFrom.program, kgCopyFrom.index, into.program);
+    } catch (err) {
+      $('kgSummary').textContent = 'Could not work it out: ' + err.message;
+      $('kgGo').disabled = true;
+      return;
+    }
+
+    $('kgGo').disabled = !plan.ok;
+
+    if (!plan.ok) { $('kgSummary').textContent = plan.problems.join('  '); return; }
+
+    var where = into.disk.name.replace(/\.(hfe|img)$/i, '');
+    var bits = [];
+
+    plan.samples.forEach(function (i) {
+      if (i.alreadyHere) bits.push(i.from + ' is already on ' + where);
+      else if (i.renamed) bits.push(i.from + ' comes too, as ' + i.to + ' (that name is taken)');
+      else bits.push(i.to + ' comes with it');
+    });
+
+    if (!bits.length) bits.push('Everything it names is already on ' + where + '.');
+
+    bits.push('Takes ' + plan.blocks + ' of the ' + into.disk.freeBlocks() +
+              ' block(s) free on ' + where + '.');
+
+    plan.notes.forEach(function (n) { bits.push(n + '.'); });
+
+    $('kgSummary').textContent = bits.join('   -   ');
+  }
+
+  $('kgGo').onclick = function () {
+    var into = kgChosen();
+    if (!into || !kgCopyFrom) return;
+
+    var from = kgCopyFrom;
+    var where = into.disk.name.replace(/\.(hfe|img)$/i, '');
+    var name = into.program.name.trim();
+    var targetSlot = into.program.slot;
+
+    var plan;
+    try {
+      plan = into.disk.planCopyKeygroup(from.disk, from.program, from.index, into.program);
+    } catch (err) { say('Could not work out the copy: ' + err.message); return; }
+
+    if (!plan.ok) { say('Cannot copy it into ' + name + ':  ' + plan.problems.join('  ')); return; }
+
+    $('kgDlg').close();
+    kgCopyFrom = null;
+
+    try {
+      pushUndo(into.disk, 'copy keygroup into ' + name);
+
+      var number = into.disk.applyCopyKeygroup(plan);
+
+      var msg = 'Copied keygroup ' + (from.index + 1) + ' of ' + from.program.name.trim() +
+                ' into ' + name + ' on ' + where + ' as keygroup ' + number;
+
+      if (plan.writes.length)
+        msg += '  -  ' + plan.writes.length + ' sample' +
+               (plan.writes.length === 1 ? '' : 's') + ' came with it';
+
+      var renamed = plan.samples.filter(function (i) { return i.renamed; }).length;
+      if (renamed) msg += ', ' + renamed + ' renamed to avoid a clash';
+
+      reselect(into.disk, targetSlot, msg + '.  Unsaved changes.');
+    } catch (err) {
+      say('Could not copy the keygroup: ' + err.message);
+      buildTree();
+    }
+  };
+
   $('kgDel').onclick = function () {
     var going = editTargets().sort(function (a, b) { return b - a; });
     if (!going.length) return;
@@ -2338,6 +2485,114 @@
   });
 
   $('opRenameFile').onclick = doRename;
+
+  // --------------------------------------------------- copying between disks
+
+  /*
+   * The Copy to picker: every other disk that is open.
+   *
+   * Hidden rather than disabled when nothing else is loaded. There is nothing to choose
+   * between, and a dropdown holding only its own prompt invites a click that cannot do
+   * anything.
+   */
+  function fillCopyTo(d, e) {
+    var pick = $('opCopyTo');
+    var others = disks.filter(function (x) { return x !== d; });
+
+    pick.hidden = !(e && (e.type === 'S' || e.type === 'P')) || others.length === 0;
+    pick.innerHTML = '';
+
+    var head = document.createElement('option');
+    head.value = '';
+    head.textContent = 'Copy to...';
+    pick.appendChild(head);
+
+    others.forEach(function (x) {
+      var o = document.createElement('option');
+      o.value = String(disks.indexOf(x));
+      o.textContent = x.name.replace(/\.(hfe|img)$/i, '');
+      pick.appendChild(o);
+    });
+
+    pick.value = '';
+  }
+
+  $('opCopyTo').onchange = function () {
+    var pick = $('opCopyTo');
+    var target = disks[parseInt(pick.value, 10)];
+
+    pick.value = '';              // back to the prompt, whatever happens next
+
+    if (!target || !sel || !sel.entry) return;
+    doCopyTo(sel.disk, sel.entry, target);
+  };
+
+  /*
+   * Copy a sample or a program onto another open disk.
+   *
+   * The plan is worked out and shown before anything is written, because a copy can
+   * quietly be bigger than it looks: a program brings every sample its zones name, and one
+   * of those can already be there under the same name holding something else. Nothing on
+   * the target is ever replaced - a clash is renamed - so the worst case is a file you did
+   * not want rather than one you cannot get back.
+   */
+  function doCopyTo(from, entry, target) {
+    var where = target.name.replace(/\.(hfe|img)$/i, '');
+    var plan;
+
+    try { plan = target.planCopy(from, entry); }
+    catch (err) { say('Could not work out the copy: ' + err.message); return; }
+
+    if (!plan.ok) { say('Will not fit on ' + where + ':  ' + plan.problems.join('  ')); return; }
+
+    if (plan.writes.length === 0) {
+      say(entry.name.trim() + ' is already on ' + where +
+          ', with everything it needs.  Nothing copied.');
+      return;
+    }
+
+    var lines = plan.items.map(function (i) {
+      var what = i.type === 'P' ? 'program' : 'sample ';
+      if (i.alreadyHere) return '   ' + what + '  ' + i.from + '  -  already there, left alone';
+      if (i.renamed) return '   ' + what + '  ' + i.from + '  ->  ' + i.to +
+                            '   (that name is taken by something else)';
+      return '   ' + what + '  ' + i.to;
+    });
+
+    var msg = 'Copy to ' + where + ':\n\n' + lines.join('\n') +
+              '\n\nTakes ' + plan.blocks + ' of the ' + target.freeBlocks() +
+              ' block(s) free on ' + where + '.';
+
+    if (plan.notes.length) msg += '\n\n' + plan.notes.join('\n') + '.';
+
+    if (!confirm(msg)) return;
+
+    try {
+      pushUndo(target, 'copy ' + entry.name.trim() + ' to ' + where);
+
+      var landed = target.applyCopy(plan);
+
+      // Land on what arrived - the program if one came, else the sample.
+      var show = landed.filter(function (x) { return x.type === entry.type; })[0] ||
+                 landed[landed.length - 1];
+
+      var extra = '';
+      if (entry.type === 'P' && plan.sampleWrites > 0)
+        extra += ' with ' + plan.sampleWrites + ' sample' + (plan.sampleWrites === 1 ? '' : 's');
+
+      var reused = plan.items.filter(function (i) { return i.alreadyHere; }).length;
+      if (reused) extra += '  -  ' + reused + ' already there';
+
+      var renamed = plan.items.filter(function (i) { return i.renamed; }).length;
+      if (renamed) extra += '  -  ' + renamed + ' renamed to avoid a clash';
+
+      reselect(target, show.slot,
+               'Copied ' + entry.name.trim() + ' to ' + where + extra + '.  Unsaved changes.');
+    } catch (err) {
+      say('Could not copy: ' + err.message);
+      buildTree();
+    }
+  }
   $('opDelete').onclick = function () {
     if (!sel || !sel.entry) return;
     if (sel.entry.type === 'P') doDeleteProgram(); else doDelete();
@@ -2413,6 +2668,40 @@
   $('opStretch').onclick = doStretch;
   $('opSlice').onclick = doSlice;
   $('opLoop').onclick = doFindLoop;
+
+  /*
+   * Save the selected sample as a WAV.
+   *
+   * The disk download beside this one writes the image as an S950 would read it, which is
+   * the right thing for putting back on a floppy and no use at all in a DAW. This is the
+   * other half: the audio, at its own rate, with the loop described in the file rather
+   * than baked into it. See Disk.prototype.sampleWav.
+   */
+  $('opExportWav').onclick = function () {
+    if (!sel || !sel.entry || sel.entry.type !== 'S') return;
+
+    var e = sel.entry;
+    var bytes;
+
+    try { bytes = sel.disk.sampleWav(e); }
+    catch (err) { say('Could not build the WAV: ' + err.message); return; }
+
+    // A header and nothing after it means the sample had no audio on the disk.
+    if (!bytes || bytes.length <= 44) { say('That sample has no audio on the disk.'); return; }
+
+    var file = (e.name.trim().replace(/[^A-Za-z0-9 ._-]+/g, '_') || 'sample') + '.wav';
+
+    var blob = new Blob([bytes], { type: 'audio/wav' });
+    var a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = file;
+    a.click();
+    setTimeout(function () { URL.revokeObjectURL(a.href); }, 5000);
+
+    var loops = (e.loopMode === 'L' || e.loopMode === 'A') && e.loopLength >= 2;
+    say('Wrote ' + file + '  (' + fmt6(bytes.length) + ' bytes, ' + e.sampleRate + ' Hz'
+        + (loops ? ', loop written into the file' : ', one-shot') + ')');
+  };
 
   // ------------------------------------------------------------- find a loop
   //

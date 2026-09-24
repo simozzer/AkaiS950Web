@@ -47,6 +47,7 @@
       <span class="rowbuttons" id="fileOps" hidden>
         <button id="opRenameFile">Rename</button>
         <button id="opDelete" hidden>Delete</button>
+        <select id="opCopyTo" hidden title="Copy this onto another open disk image. A program brings every sample its zones name with it; a name already taken by something else is renamed rather than overwritten."></select>
       </span>
       <span id="progWrap" hidden><span id="progParams"></span></span>
       <span id="smpWrap" hidden><span id="smpParams"></span></span>
@@ -216,6 +217,7 @@
             <div class="kgbtns">
               <button id="kgAdd" title="Add a keygroup after the selected one">Add</button>
               <button id="kgDel" disabled title="Delete the selected keygroup">Delete</button>
+              <button id="kgCopy" disabled title="Copy the selected keygroup onto another program, here or on another open disk. The samples its zones name come with it.">Copy to...</button>
             </div>
           </div>
 
@@ -260,6 +262,7 @@
             <button id="opStretch">Fit to tempo</button>
             <button id="opLoop">Find loop</button>
             <button id="opSlice">Slice</button>
+            <button id="opExportWav" title="Save this sample as a 16-bit WAV at its own rate. The loop and root note travel in the file, so a sampler that reads them picks the loop up by itself.">Export WAV</button>
           </span>
         </h3>
         <!-- the transport stands beside the waveform rather than under it: the dock is
@@ -355,6 +358,26 @@
       <span class="spacer"></span>
       <button type="button" id="slCancel">Cancel</button>
       <button type="button" id="slGo">Slice</button>
+    </menu>
+  </form>
+</dialog>
+
+<dialog id="kgDlg">
+  <form method="dialog">
+    <h2>Copy keygroup</h2>
+    <p id="kgSource" class="muted"></p>
+
+    <div class="grid">
+      <label for="kgTarget">Into program</label>
+      <div class="pair"><select id="kgTarget" size="10"></select></div>
+    </div>
+
+    <p id="kgSummary" class="summary"></p>
+
+    <menu>
+      <span class="spacer"></span>
+      <button type="button" id="kgCancel">Cancel</button>
+      <button type="button" id="kgGo">Copy</button>
     </menu>
   </form>
 </dialog>

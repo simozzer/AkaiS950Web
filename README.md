@@ -99,6 +99,13 @@ under the envelopes it modulates. **Both zones and the flags** make the third co
 - Creates and deletes programs, adds and removes keygroups, renames and deletes samples
 - Stretches a sample to a new tempo, halves its rate, trims the silence off both ends
 - Finds a loop in a sustained sample, and says how clean the join is
+- **Copy to** puts the selected sample or program onto another open disk image. A program
+  brings every sample its zones name; a name already taken by something else is renamed
+  rather than overwritten
+- **Copy to...** under the keygroup list puts a single keygroup onto another program, on
+  this disk or another open one, bringing the samples its zones name with it
+- **Export WAV** downloads the selected sample as a 16-bit WAV at its own rate, with the
+  loop and the root note in the file's `smpl` chunk rather than baked into the audio
 - Rebuilds and downloads the image as `.hfe` or as a raw `.img`, for FlashFloppy
 
 The drum set and overall-settings files are kept on the disk but not shown. Nothing in
@@ -221,6 +228,9 @@ Everything that checks the app, or was used to work the format out, lives beside
 | `slicetest.js` | slices a break on every image with room for it |
 | `imgtest.js` | converts every image to raw `.img` and checks nothing is lost |
 | `looptest.js` | the loop finder, against the loops the library shipped with |
+| `wavtest.js` | the WAV export on every sample: chunk structure, and the loop landing where the player puts it |
+| `copytest.js` | copying across every pair of disks: what arrives, and that nothing already on the target moved |
+| `keygrouptest.js` | copying one keygroup onto another program, across disks and within one |
 | `trimtest.js` | trimming both ends, and that a loop is never cut into |
 | `newdisk.js` | builds a disk from nothing, fills it and writes it both ways — the one test that needs no images |
 | `vcftest.js` | measures the VCF — flat passband, −3 dB at cutoff, 36 dB/octave — and checks the calibrator recovers a mapping it is not given |
@@ -403,6 +413,68 @@ name.
 **Sample operations**, on the waveform pane: **Trim silence**, **Halve rate**, **Fit to tempo**
 (WSOLA time stretch, pitch preserved), **Find loop**, and **Rename** on the file heading —
 which retargets every keygroup zone that named the sample.
+
+### Copying between disks
+
+**Copy to** in the file row lists every other disk that is open. Nothing is written until
+the whole set fits, and a confirmation first itemises exactly what would land.
+
+A program is never copied alone: its zones name their samples by name, so every sample
+they name comes with it, or it would arrive silent. That makes a copy quietly larger than
+it looks, which is why the confirmation spells it out.
+
+Nothing on the target is replaced. A name already taken by a *different* file is renamed -
+`BASSLOOP` arrives as `BASSLOOP2` - and the copied program's zones are repointed at the
+new name, so it still plays what it came with while the target keeps what it had. A name
+taken by the *same* file is recognised and skipped, so copying a program twice costs
+nothing the second time.
+
+Two numbers in a sample's header belong to the disk rather than the sample - its address
+in the sampler's RAM and its loop-descriptor pointer - and `rebuildPointers` touches
+neither, so `planCopy` recomputes them from the last sample already on the target.
+Everything else carries over untouched: rate, tuning, loop markers, mode and direction.
+
+**Copy to...** under the keygroup list does the same for a single keygroup, onto any other
+program that is open. Unlike a file copy this may end on the disk it started on - moving a
+keygroup between two programs of one disk is an ordinary thing to want - and it brings only
+the one or two samples that keygroup's own zones name, rather than the whole program's. It
+lands at the end of the target program; a keygroup's place in the chain carries nothing the
+sampler reads, since the key range decides what sounds.
+
+`copytest.js` copies every sample and program across every pair of disks and checks rather
+more about what must not change than about what does - every pre-existing file byte for
+byte, and `rebuildPointers` on the reloaded result finding nothing left to fix. The
+desktop version does the same work from the same disks; `AkaiS950Tests\CopyCheck.cs` over
+in the VirtualS950 repository is the other half.
+
+### Exporting a sample as a WAV
+
+**Export WAV** writes the selected sample as a 16-bit mono WAV at its own rate and hands
+it to the browser as a download. The whole sample comes out: the audio is not trimmed to
+the markers and the loop is not baked into it. Both travel in the file's `smpl` chunk
+instead, along with the root note taken from the sample's tuning, so a sampler or DAW that
+reads that chunk picks the loop up by itself and one that does not still gets the whole
+sound. Nothing is discarded either way, so the markers can still be moved afterwards.
+
+The loop is the tail running back from the **end** marker by the loop length, not the
+whole marked span — the same reading the player uses. The clamping that goes with it is
+the common path rather than an edge case:
+
+```
+6 disk(s), 61 sample(s), 43 looping, 37 with a loop longer than the sample
+990 checks, ALL PASSED
+```
+
+Thirty-seven of the sixty-one declare a loop length longer than the sample it belongs to,
+so a loop start worked out by subtraction alone lands before the start of the sound.
+`wavtest.js` works out where the loop should land independently rather than by calling
+`sampleWav`, because two pieces of code agreeing when they are the same code proves
+nothing.
+
+The desktop version writes this file too, from the same disks, and the two are separate
+implementations. All 61 samples in the shipped library come out **byte for byte
+identical** from both — `AkaiS950Tests\WavCheck.cs` over in the VirtualS950 repository is
+the other half of `wavtest.js`.
 
 ### Trimming silence
 

@@ -585,6 +585,104 @@ var Akai = (function () {
     return pcm;
   };
 
+  /**
+   * The sample as a 16-bit mono WAV, ready to download.
+   *
+   * Everything the sample stores comes out: all of the audio, at its own rate, with the
+   * loop and the root note in a standard `smpl` chunk rather than baked into the samples.
+   * A sampler or DAW that reads that chunk picks the loop up by itself; one that does not
+   * still gets the whole sound and plays it through. Nothing is discarded either way, so
+   * the markers can still be moved afterwards - the audio outside them is still there.
+   *
+   * Every step below mirrors WavFile.cs in the desktop version, clamps included, because
+   * the two disagreeing would mean the same disk exporting two different files. The
+   * clamps are not theoretical: 37 of the 61 samples in the shipped library declare a
+   * loop longer than the sample they belong to.
+   */
+  Disk.prototype.sampleWav = function (e) {
+    var words = this.sampleWords12(e);
+    var n = words.length;
+
+    // A corrupt header should not produce a file no player will open.
+    var rate = e.sampleRate;
+    if (!(rate >= 1000 && rate <= 192000)) rate = 40000;
+
+    // The loop the machine plays: the tail running back from the END marker by the loop
+    // length, not the whole marked span. audio.js reads it the same way.
+    var start = Math.max(0, Math.min(n, e.loopStart || 0));
+    var end = (e.loopEnd > 0) ? Math.min(e.loopEnd, n) : n;
+    if (end <= start) { start = 0; end = n; }
+
+    var head = end - start;
+    var declared = e.loopLength || 0;
+    var loopLen = Math.min(declared, head);
+
+    var loops = (e.loopMode === 'L' || e.loopMode === 'A') && declared >= 2 && loopLen >= 2;
+
+    // `smpl` names the last frame inside the loop, where Akai's end marker is one past it.
+    var from = Math.max(0, end - loopLen);
+    var to = Math.min(n - 1, end - 1);
+    if (to <= from) loops = false;
+
+    var dataBytes = n * 2;
+    var smplBytes = loops ? 8 + 36 + 24 : 0;
+    var total = 12 + (8 + 16) + (8 + dataBytes) + smplBytes;
+
+    var out = new Uint8Array(total);
+    var dv = new DataView(out.buffer);
+    var at = 0;
+
+    function tag(s) { for (var i = 0; i < s.length; i++) out[at++] = s.charCodeAt(i); }
+    function u32(v) { dv.setUint32(at, v >>> 0, true); at += 4; }
+    function u16(v) { dv.setUint16(at, v & 0xFFFF, true); at += 2; }
+
+    tag('RIFF'); u32(total - 8); tag('WAVE');
+
+    tag('fmt '); u32(16);
+    u16(1);                     // format: PCM
+    u16(1);                     // mono
+    u32(rate);
+    u32(rate * 2);              // bytes per second
+    u16(2);                     // block align
+    u16(16);                    // bits per sample
+
+    tag('data'); u32(dataBytes);
+    // x16 lifts the stored 12 bits into the 16 a WAV carries, as samplePcm does in C#.
+    for (var i = 0; i < n; i++) { dv.setInt16(at, words[i] * 16, true); at += 2; }
+
+    if (loops) {
+      /*
+       * The root note travels with it. Tuning is 16ths of a semitone with C3 at 960, so
+       * the whole semitones are the MIDI note and the remainder is the fine tuning -
+       * which `smpl` wants as a fraction of a semitone scaled across a full 32 bits.
+       */
+      var tuning = e.tuning || 0;
+      var note = tuning > 0 ? (tuning / 16) | 0 : 60;
+      if (note < 0) note = 0;
+      if (note > 127) note = 127;
+
+      tag('smpl'); u32(36 + 24);
+      u32(0);                                   // manufacturer
+      u32(0);                                   // product
+      u32(Math.round(1000000000 / rate));       // sample period, nanoseconds
+      u32(note);                                // MIDI unity note
+      u32((tuning > 0 ? tuning % 16 : 0) * (4294967296 / 16));   // MIDI pitch fraction
+      u32(0);                                   // SMPTE format
+      u32(0);                                   // SMPTE offset
+      u32(1);                                   // one loop
+      u32(0);                                   // no extra sampler data
+
+      u32(0);                                   // cue point id
+      u32(e.loopMode === 'A' ? 1 : 0);          // 0 forwards, 1 alternating
+      u32(from);
+      u32(to);
+      u32(0);                                   // fraction
+      u32(0);                                   // play count: 0 is for ever
+    }
+
+    return out;
+  };
+
   /** The inverse: pack signed 12-bit words into the split-nibble layout. */
   function packSampleData(words, count) {
     var n = Math.min(count, words.length) & ~1;
@@ -1496,6 +1594,218 @@ var Akai = (function () {
     return count + 1;
   };
 
+  /** One keygroup's 70 bytes, lifted out of the program that holds it. */
+  Disk.prototype.keygroupRecord = function (program, index) {
+    var body = this.readFile(program);
+    var at = PROG_HEADER + index * KEYGROUP;
+
+    if (at + KEYGROUP > body.length)
+      throw new Error('That keygroup is past the end of the program.');
+
+    return new Uint8Array(body.subarray(at, at + KEYGROUP));
+  };
+
+  /** The sample names one keygroup record's two zones point at. */
+  function zoneNamesOf(record) {
+    var names = [];
+
+    for (var z = 0; z < 2; z++) {
+      var at = KG_NAME + z * KG_ZONE_STRIDE;
+      if (at + 10 > record.length) continue;
+
+      var n = cleanName(record, at).trim();
+      if (!n || n === '2 SAMPLE') continue;
+
+      var have = false;
+      for (var i = 0; i < names.length; i++)
+        if (names[i].toUpperCase() === n.toUpperCase()) { have = true; break; }
+
+      if (!have) names.push(n);
+    }
+    return names;
+  }
+
+  /**
+   * What copying one keygroup onto a program on this disk would do.
+   *
+   * Unlike a file copy this is allowed to start on the disk it finishes on: moving a
+   * keygroup from one program to another on the same disk is an ordinary thing to want,
+   * and the samples it names are then already here, which the plan discovers for itself
+   * rather than being told.
+   *
+   * The keygroup is appended to the end of the target program. A keygroup's place in the
+   * chain carries no meaning the sampler reads - the key range decides what sounds - so
+   * there is nothing to be gained by inserting it anywhere else.
+   */
+  Disk.prototype.planCopyKeygroup = function (from, sourceProgram, index, targetProgram) {
+    var self = this;
+    var plan = {
+      from: from, sourceProgram: sourceProgram, index: index, targetProgram: targetProgram,
+      samples: [], problems: [], notes: [], blocks: 0, slots: 0
+    };
+
+    function stop(why) { plan.problems.push(why); plan.ok = false; return plan; }
+
+    if (!from || !sourceProgram || !targetProgram) return stop('Nothing to copy.');
+    if (sourceProgram.type !== 'P' || targetProgram.type !== 'P')
+      return stop('Keygroups can only be copied from one program to another.');
+
+    var have = from.keygroupCount(sourceProgram);
+    if (index < 0 || index >= have) return stop('That program has no keygroup ' + (index + 1) + '.');
+
+    var already = this.keygroupCount(targetProgram);
+    if (already >= MAX_KEYGROUPS)
+      return stop(targetProgram.name.trim() + ' already holds ' + MAX_KEYGROUPS +
+                  ' keygroups, which is the limit.');
+
+    var record = from.keygroupRecord(sourceProgram, index);
+
+    var taken = {};
+    this.entries.forEach(function (x) {
+      if (x.type === 'S') taken[x.name.trim().toUpperCase()] = true;
+    });
+
+    // The samples this one keygroup names, rather than the whole program's.
+    zoneNamesOf(record).forEach(function (named) {
+      var src = null;
+      for (var i = 0; i < from.entries.length; i++) {
+        var x = from.entries[i];
+        if (x.type === 'S' && x.name.trim().toUpperCase() === named.toUpperCase()) { src = x; break; }
+      }
+
+      if (!src) {
+        plan.notes.push('"' + named + '" is named by a zone but is not on ' +
+                        (from.name || 'the other disk') +
+                        ' either, so it will still be missing here');
+        return;
+      }
+
+      var bytes = from.readFile(src);
+
+      var clash = null;
+      for (var j = 0; j < self.entries.length; j++) {
+        var y = self.entries[j];
+        if (y.type === 'S' && y.name.trim().toUpperCase() === named.toUpperCase()) { clash = y; break; }
+      }
+
+      var item = { source: src, type: 'S', from: named, to: named, alreadyHere: false, blocks: 0 };
+
+      if (clash && sameFile('S', self.readFile(clash), bytes)) {
+        item.alreadyHere = true;
+      } else {
+        if (clash) item.to = freeCopyName(named, taken);
+        taken[item.to.toUpperCase()] = true;
+
+        item.blocks = blocksFor(bytes.length);
+        plan.blocks += item.blocks;
+        plan.slots++;
+      }
+
+      item.renamed = !item.alreadyHere && item.from.toUpperCase() !== item.to.toUpperCase();
+      plan.samples.push(item);
+    });
+
+    // The target program grows by one record, which may cost it another block.
+    var was = this.readFile(targetProgram).length;
+    plan.blocks += blocksFor(was + KEYGROUP) - blocksFor(was);
+
+    plan.writes = plan.samples.filter(function (i) { return !i.alreadyHere; });
+
+    var free = this.freeBlocks();
+    if (plan.blocks > free)
+      plan.problems.push('Needs ' + plan.blocks + ' block(s), ' + free + ' free on this disk.');
+
+    var slots = this.freeSlots();
+    if (plan.slots > slots)
+      plan.problems.push('Needs ' + plan.slots + ' directory slot(s), ' + slots + ' free.');
+
+    plan.ok = plan.problems.length === 0;
+    return plan;
+  };
+
+  /**
+   * Carry out a keygroup plan, and return the new keygroup's number, counting from 1 as
+   * the list shows them.
+   */
+  Disk.prototype.applyCopyKeygroup = function (plan) {
+    var self = this;
+    if (!plan) throw new Error('no plan');
+    if (!plan.ok) throw new Error(plan.problems.join('  '));
+
+    var renamed = {};
+    plan.samples.forEach(function (i) {
+      if (!i.alreadyHere && i.from.toUpperCase() !== i.to.toUpperCase())
+        renamed[i.from.toUpperCase()] = i.to;
+    });
+
+    /*
+     * The record is taken before anything is written. Adding the samples reparses the
+     * directory, which builds new entry objects, so the ones the plan is holding stop
+     * being the ones this disk knows about - their slots stay right, which is how the
+     * target program is found again below.
+     */
+    var record = plan.from.keygroupRecord(plan.sourceProgram, plan.index);
+
+    plan.samples.forEach(function (item) {
+      if (!item.alreadyHere) self.writeCopiedSample(item, plan.from.readFile(item.source));
+    });
+
+    // A zone whose sample arrived under a new name has to be told about it.
+    for (var z = 0; z < 2; z++) {
+      var at = KG_NAME + z * KG_ZONE_STRIDE;
+      if (at + 10 > record.length) continue;
+
+      var was = cleanName(record, at).trim();
+      if (!was) continue;
+
+      var now = renamed[was.toUpperCase()];
+      if (!now) continue;
+
+      for (var i = 0; i < 10; i++)
+        record[at + i] = i < now.length ? now.charCodeAt(i) : 32;
+    }
+
+    var target = this.entryInSlot(plan.targetProgram.slot);
+    if (!target || target.type !== 'P')
+      throw new Error('The program to copy into is no longer there.');
+
+    return this.appendKeygroup(target, record);
+  };
+
+  /**
+   * Put a keygroup record on the end of a program, growing the file by one record.
+   *
+   * The same shape as addKeygroup, which duplicates one the program already holds; this
+   * one takes its record from outside. The pointers inside it - the chain, and the two
+   * zone pointers - are whatever the disk it came from had, and are left to
+   * rebuildPointers, which works them out from the names rather than carrying them.
+   */
+  Disk.prototype.appendKeygroup = function (program, record) {
+    if (!program || program.type !== 'P') throw new Error('not a program');
+    if (!record || record.length !== KEYGROUP)
+      throw new Error('a keygroup is ' + KEYGROUP + ' bytes');
+
+    var count = this.keygroupCount(program);
+    if (count >= MAX_KEYGROUPS)
+      throw new Error('A program can hold at most ' + MAX_KEYGROUPS + ' keygroups.');
+
+    var data = this.readFile(program);
+    var base = this.keygroupArenaBase(program);
+
+    var bigger = new Uint8Array(data.length + KEYGROUP);
+    bigger.set(data, 0);
+    bigger.set(record, PROG_HEADER + count * KEYGROUP);
+
+    relink(bigger, count + 1, base);
+    this.resizeFile(program, bigger);
+
+    this.modified = true;
+    this.parseDirectory();
+    this.rebuildPointers();     // an extra keygroup moves the sample table, so every
+    this.parseDirectory();      // zone pointer past it changes too
+    return count + 1;
+  };
+
   Disk.prototype.deleteKeygroup = function (program, index) {
     var count = this.keygroupCount(program);
     if (count <= 1) throw new Error('A program must keep at least one keygroup.');
@@ -1772,6 +2082,316 @@ var Akai = (function () {
     return DIR_ENTRIES - used;
   };
 
+  // ------------------------------------------------ copying between disks
+
+  /*
+   * Copying a sample or a program from one disk image to another.
+   *
+   * Planned before any of it is written, the way slicing is: planCopy says what would
+   * land, under what names, and what it would cost; applyCopy refuses a plan that
+   * reported a problem. Nothing is written until the whole set fits.
+   *
+   * Two things make this more than a byte copy.
+   *
+   * A program's zones name their samples by name, so a program is never copied alone -
+   * every sample its zones name comes with it, or it arrives silent. And a sample's
+   * header carries two numbers belonging to the disk it was living on rather than to the
+   * sample: where it sits in the sampler's RAM (0x36..0x38) and where its loop
+   * descriptors sit (0x28). rebuildPointers touches neither - it rebuilds the keygroup
+   * arena, not the sample table - so they are recomputed here from the last sample
+   * already on this disk, exactly as addSample derives them for a new one.
+   *
+   * A direct mirror of AkaiDiskCopy.cs in the desktop version, clamps and all.
+   */
+
+  /** Every sample name a program's zones point at, in keygroup order. */
+  Disk.prototype.zoneSampleNames = function (program) {
+    var names = [];
+    if (!program || program.type !== 'P') return names;
+
+    var body = this.readFile(program);
+    var n = this.keygroupCount(program);
+
+    for (var k = 0; k < n; k++) {
+      for (var z = 0; z < 2; z++) {
+        var at = PROG_HEADER + k * KEYGROUP + KG_NAME + z * KG_ZONE_STRIDE;
+        if (at + 10 > body.length) continue;
+
+        var name = cleanName(body, at).trim();
+        if (!name || name === '2 SAMPLE') continue;
+
+        var have = false;
+        for (var i = 0; i < names.length; i++)
+          if (names[i].toUpperCase() === name.toUpperCase()) { have = true; break; }
+
+        if (!have) names.push(name);
+      }
+    }
+    return names;
+  };
+
+  /*
+   * Whether two files are the same one, ignoring the fields that belong to the disk they
+   * happen to be sitting on rather than to the file itself.
+   *
+   * Without this a sample copied onto a disk that already has it would look different -
+   * its RAM address alone would differ - and be copied a second time.
+   */
+  function sameFile(type, a, b) {
+    if (!a || !b || a.length !== b.length) return false;
+
+    var skip = {};
+    function mask(o) { skip[o] = true; }
+
+    if (type === 'S') {
+      mask(0x28); mask(0x29);                      // loop descriptor pointer
+      mask(0x36); mask(0x37); mask(0x38);          // where it loads in RAM
+    } else if (type === 'P') {
+      mask(18); mask(19);                          // where its keygroups load
+      mask(26);                                    // the program number
+
+      var count = a.length > 23 ? a[23] : 0;
+      for (var k = 0; k < count; k++) {
+        var kg = PROG_HEADER + k * KEYGROUP;
+        mask(kg + KG_CHAIN); mask(kg + KG_CHAIN + 1);
+
+        for (var z = 0; z < 2; z++) {
+          var po = kg + KG_NAME + z * KG_ZONE_STRIDE + 16;
+          mask(po); mask(po + 1);
+        }
+      }
+    }
+
+    for (var i = 0; i < a.length; i++)
+      if (a[i] !== b[i] && !skip[i]) return false;
+
+    return true;
+  }
+
+  /*
+   * A name like the one asked for that nothing of that type is using: NAME2, NAME3, and
+   * so on, shortened from the right when the number needs the room.
+   */
+  function freeCopyName(want, taken) {
+    var stem = normaliseName(want).replace(/\s+$/, '');
+    if (!stem) stem = 'COPY';
+
+    for (var n = 2; n < 1000; n++) {
+      var suffix = String(n);
+      var head = stem;
+
+      if (head.length + suffix.length > 10)
+        head = head.substring(0, Math.max(1, 10 - suffix.length)).replace(/\s+$/, '');
+
+      var candidate = head + suffix;
+      if (!taken[candidate.toUpperCase()]) return candidate;
+    }
+    throw new Error('Could not find an unused name based on "' + want + '".');
+  }
+
+  /*
+   * The file restates its own name in bytes 0..9, and it is that copy the S950 puts on
+   * its display rather than the directory entry. A renamed copy named only in the
+   * directory would go on showing the name it used to have.
+   */
+  function setFileName(file, name) {
+    var clean = normaliseName(name);
+    for (var i = 0; i < 10 && i < file.length; i++)
+      file[i] = i < clean.length ? clean.charCodeAt(i) : 32;
+  }
+
+  /**
+   * What it would take to copy one file from another disk onto this one. The samples come
+   * first in the list because they have to exist here before the program that names them,
+   * and applyCopy writes them in that order.
+   */
+  Disk.prototype.planCopy = function (from, what) {
+    var self = this;
+    var plan = { from: from, what: what, items: [], problems: [], notes: [], blocks: 0, slots: 0 };
+
+    if (!from || !what) { plan.problems.push('Nothing to copy.'); plan.ok = false; return plan; }
+    if (from === this) { plan.problems.push('That file is already on this disk.'); plan.ok = false; return plan; }
+
+    if (what.type !== 'S' && what.type !== 'P') {
+      plan.problems.push('Only samples and programs can be copied - the ' +
+                         typeName(what.type) + ' belongs to the disk it is on.');
+      plan.ok = false;
+      return plan;
+    }
+
+    // Samples first, then the program: a zone can only find a sample already here.
+    var order = [];
+
+    if (what.type === 'P') {
+      from.zoneSampleNames(what).forEach(function (named) {
+        var found = null;
+        for (var i = 0; i < from.entries.length; i++) {
+          var x = from.entries[i];
+          if (x.type === 'S' && x.name.trim().toUpperCase() === named.toUpperCase()) { found = x; break; }
+        }
+
+        if (!found) {
+          plan.notes.push('"' + named + '" is named by a zone but is not on ' +
+                          (from.name || 'the other disk') +
+                          ' either, so it will still be missing here');
+          return;
+        }
+
+        for (var j = 0; j < order.length; j++) if (order[j].slot === found.slot) return;
+        order.push(found);
+      });
+    }
+
+    order.push(what);
+
+    // Names in use here, per type - extended as the plan grows, so two incoming samples
+    // cannot both be promised the same new name.
+    var taken = { S: {}, P: {} };
+    this.entries.forEach(function (x) {
+      if (taken[x.type]) taken[x.type][x.name.trim().toUpperCase()] = true;
+    });
+
+    order.forEach(function (src) {
+      var bytes = from.readFile(src);
+      var name = src.name.trim();
+      var item = { source: src, type: src.type, from: name, to: name, alreadyHere: false, blocks: 0 };
+
+      var clash = null;
+      for (var i = 0; i < self.entries.length; i++) {
+        var x = self.entries[i];
+        if (x.type === src.type && x.name.trim().toUpperCase() === name.toUpperCase()) { clash = x; break; }
+      }
+
+      if (clash && sameFile(src.type, self.readFile(clash), bytes)) {
+        // The same file under the same name. Copying it again would spend blocks on a
+        // second copy of something already here.
+        item.alreadyHere = true;
+      } else {
+        if (clash) item.to = freeCopyName(name, taken[src.type]);
+        taken[src.type][item.to.toUpperCase()] = true;
+
+        item.blocks = blocksFor(bytes.length);
+        plan.blocks += item.blocks;
+        plan.slots++;
+      }
+
+      item.renamed = !item.alreadyHere && item.from.toUpperCase() !== item.to.toUpperCase();
+      plan.items.push(item);
+    });
+
+    plan.writes = plan.items.filter(function (i) { return !i.alreadyHere; });
+    plan.sampleWrites = plan.writes.filter(function (i) { return i.type === 'S'; }).length;
+
+    var free = this.freeBlocks();
+    if (plan.blocks > free)
+      plan.problems.push('Needs ' + plan.blocks + ' block(s), ' + free + ' free on this disk.');
+
+    var slots = this.freeSlots();
+    if (plan.slots > slots)
+      plan.problems.push('Needs ' + plan.slots + ' directory slot(s), ' + slots + ' free.');
+
+    plan.ok = plan.problems.length === 0;
+    return plan;
+  };
+
+  /**
+   * Carry out a plan. It refuses one that reported a problem rather than writing half of
+   * it, because a disk holding a program whose samples did not fit is worse than a disk
+   * that was left alone.
+   */
+  Disk.prototype.applyCopy = function (plan) {
+    var self = this;
+    if (!plan) throw new Error('no plan');
+    if (!plan.ok) throw new Error(plan.problems.join('  '));
+
+    // Where a sample had to be renamed, the program's zones have to follow it.
+    var renamed = {};
+    plan.items.forEach(function (i) {
+      if (i.type === 'S' && !i.alreadyHere && i.from.toUpperCase() !== i.to.toUpperCase())
+        renamed[i.from.toUpperCase()] = i.to;
+    });
+
+    var landed = [];
+
+    plan.items.forEach(function (item) {
+      if (item.alreadyHere) return;
+
+      var bytes = plan.from.readFile(item.source);
+      var e = item.type === 'S'
+            ? self.writeCopiedSample(item, bytes)
+            : self.writeCopiedProgram(item, bytes, renamed);
+
+      landed.push(e.slot);
+    });
+
+    this.parseDirectory();
+    this.rebuildPointers();
+    this.parseDirectory();
+
+    return this.entries.filter(function (e) { return landed.indexOf(e.slot) >= 0; });
+  };
+
+  Disk.prototype.writeCopiedSample = function (item, bytes) {
+    var file = new Uint8Array(bytes);           // a copy, not a view onto the source
+    setFileName(file, item.to);
+
+    /*
+     * The two numbers that belong to the disk rather than to the sample, worked out from
+     * the last sample already here - the same walk addSample does, and the reason the new
+     * entry has to land after that sample in the directory.
+     */
+    var ram = SAMPLE_RAM_BASE, ptr = LOOP_DESC_BASE, lastSlot = -1;
+    this.entries.forEach(function (s) {
+      if (s.type !== 'S' || s.slot <= lastSlot) return;
+      ram = s.memoryAddress + ramSize(s.sampleCount);
+      ptr = s.loopDescriptorPtr + 10 * loopRecords(s.sampleCount, s.loopMode);
+      lastSlot = s.slot;
+    });
+
+    if (file.length > 0x38) {
+      putU16(file, 0x28, ptr);
+      file[0x36] = ram & 0xFF;
+      file[0x37] = (ram >> 8) & 0xFF;
+      file[0x38] = (ram >> 16) & 0xFF;
+    }
+
+    return this.addFile(item.to, 'S', file, lastSlot + 1);
+  };
+
+  Disk.prototype.writeCopiedProgram = function (item, bytes, renamed) {
+    var file = new Uint8Array(bytes);
+    setFileName(file, item.to);
+
+    // Program numbers belong to the disk, not to the program: two sharing one is a
+    // conflict the sampler settles by playing whichever it reaches first.
+    if (file.length > 26) file[26] = this.freeProgramNumber();
+
+    // A zone whose sample arrived under a new name has to be told about it.
+    var count = file.length > 23 ? file[23] : 0;
+    for (var k = 0; k < count; k++) {
+      for (var z = 0; z < 2; z++) {
+        var at = PROG_HEADER + k * KEYGROUP + KG_NAME + z * KG_ZONE_STRIDE;
+        if (at + 10 > file.length) continue;
+
+        var was = cleanName(file, at).trim();
+        if (!was) continue;
+
+        var now = renamed[was.toUpperCase()];
+        if (!now) continue;
+
+        for (var i = 0; i < 10; i++)
+          file[at + i] = i < now.length ? now.charCodeAt(i) : 32;
+      }
+    }
+
+    // After the last program, so the P / O / D / S grouping survives.
+    var progs = this.programsInOrder();
+    var slot = progs.length ? progs[progs.length - 1].slot + 1 : 0;
+    if (slot < this.entries.length) this.makeRoomAt(slot);
+
+    return this.addFile(item.to, 'P', file, slot);
+  };
+
   /**
    * Names for a run of slices. Ten characters is the hard limit, so the stem is cut short
    * to leave room for the number, and a letter is added if that collides with a sample
@@ -2032,7 +2652,7 @@ var Akai = (function () {
 
 // Shown in the page header. Bump it with any change to the write path, so a browser
 // running a cached copy is obvious at a glance rather than after a ruined disk.
-Akai.BUILD = '2026-09-20i';
+Akai.BUILD = '2026-09-24b';
 
 if (typeof module !== 'undefined' && module.exports) module.exports = Akai;
 
