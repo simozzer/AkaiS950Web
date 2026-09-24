@@ -417,8 +417,31 @@ var AkaiAudio = (function () {
     // the sample rate. The 80 and 99 points measured 16310 Hz, but that is simply what
     // the ceiling was at 44.1 kHz; writing the number would wrongly cap a 48 kHz sample
     // below what its own ceiling allows.
-    CURVE: [[0, 311], [20, 311], [40, 1139], [50, 1878], [60, 4808], [80, null], [99, null]],
+    // Nine points now rather than the original ladder's six. The five in between came from a
+    // run built for the purpose, with key tracking, velocity and the envelope all off, so
+    // nothing but the stored byte could reach the cutoff.
+    //
+    // The 50 point moved from 1878 to 2210 - a quarter of an octave, in the middle of the
+    // range where most of the library sits. The old figure came from a clip with keyToFilter
+    // at 50, and tracking does not pivot where this assumed; see KEY_PIVOT. Two later takes,
+    // on two disks, measured 2211 and 2210 with tracking off, the second at five keys with a
+    // spread of 0.000 octaves.
+    CURVE: [[0, 311], [20, 311], [30, 544], [40, 1138], [50, 2210],
+            [60, 4779], [70, 8783], [80, null], [99, null]],
     KEY_FULL: 50,         // measured: keyToFilter 50 is 1:1 tracking
+
+    /*
+     * Measured: the note at which key tracking adds nothing.
+     *
+     * NOT 60, which is what this assumed for as long as it had a tracking term. The same
+     * keygroup played at five keys four octaves apart tracked 0.980 octaves per octave and
+     * crossed its own untracked value at note 62.0 - with the five untracked controls flat
+     * to 0.000 octaves, so there was nothing else it could have been.
+     *
+     * It matters beyond the tracking: a pivot in the wrong place quietly offsets every
+     * cutoff read from a keygroup with tracking on, which is where the old 1878 came from.
+     */
+    KEY_PIVOT: 62,
 
     // Velocity does not only open the filter - it pivots about a middling velocity and
     // CLOSES it below that. Measured on a keygroup based at stored 40 (1139 Hz) with
@@ -456,7 +479,22 @@ var AkaiAudio = (function () {
     // linear in the amount, which the report doubts only because it compares the two
     // clipped peaks. The next take should base this test near the floor instead, where
     // there is room to see the whole sweep.
-    ENV_OCTAVES: 7.6,     // measured: from the slope, both amounts agreeing
+    /*
+     * Measured: how far the filter envelope moves the cutoff at full amount.
+     *
+     * Five amounts each way, from bases chosen to leave room in the direction under test,
+     * with the envelope held open so the corner stands still and can be read properly
+     * rather than traced through a moving sweep:
+     *
+     *     opening   0.167  0.171  0.168  0.162  octaves per unit  ->  8.37
+     *     closing   0.170  0.163  0.164                           ->  8.28
+     *
+     * Straight to within 0.013 octaves both ways, and the two agree to 1.1% - so a negative
+     * amount really does invert the envelope and go exactly as far, which this had assumed
+     * without evidence. It also starts a unit or two off zero rather than at it; that dead
+     * zone is real and measured but not modelled, being worth less than the 9% this fixes.
+     */
+    ENV_OCTAVES: 8.3,     // measured
 
     // The whole envelope scale sits about 1.7x slower than first assumed. That earlier
     // reading measured time from where the clip was trimmed, and the trimmer looks for a
@@ -683,7 +721,7 @@ var AkaiAudio = (function () {
     // This is the assumption I would most like to be rid of, and it is also the cheapest
     // to test: one take of the same keygroup played an octave or two apart settles it.
     var track = clamp(kg.keyToFilter === undefined ? 0 : kg.keyToFilter, 0, 99) / CAL.KEY_FULL;
-    var keyShift = ((note === undefined ? 60 : note) - 60) / 12 * track;
+    var keyShift = ((note === undefined ? 60 : note) - CAL.KEY_PIVOT) / 12 * track;
     // about the pivot, not up from zero - see CAL.VEL_PIVOT
     var velShift = (((velocity === undefined ? 100 : velocity) - CAL.VEL_PIVOT) / 127) *
                    ((kg.velToFilter || 0) / 99) * CAL.VEL_OCTAVES;
