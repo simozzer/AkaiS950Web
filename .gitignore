@@ -46,6 +46,23 @@ tools/ENVCAL.img
 tools/ENVCAL.hfe
 tools/ENVCAL2.img
 tools/ENVCAL2.hfe
+tools/ENVCAL3.img
+tools/ENVCAL3.hfe
+tools/ENVCAL4.img
+tools/ENVCAL4.hfe
+
+# What envcal.js --json writes, for envfit.js to turn into the envelope table.
+#
+# real4.json IS committed, beside this line: it is the whole of what a recording session
+# with the hardware produced, the take itself being tens of megabytes and ignored above,
+# and nobody can make it again without the machine. model4.json is the same analysis run
+# over a render of the engine, so it is regenerable in two commands - and it would go stale
+# silently the moment the engine's constants moved, which is exactly what it exists to
+# measure against:
+#
+#   node tools/envrender.js envrendered4.wav tools/ENVCAL4.img --plan envplan4.js
+#   node tools/envcal.js envrendered4.wav tools/ENVCAL4.img --plan envplan4.js --json model4.json
+tools/model4.json
 
 # Cloudflare Pages serves landing/ and nothing else - one page whose only job is to link
 # to the GitHub Pages site, which is where the app actually lives. Deliberately not a copy

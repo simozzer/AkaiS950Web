@@ -68,7 +68,24 @@ function renderNote(clip, seconds) {
   var env = Audio.vcfEnvelope(kg, zone, clip.note, clip.velocity, RATE);
   var closing = env.withRelease(clip.hold);
 
-  var filtered = Audio.filterWords(words, RATE, closing, 8);
+  /*
+   * A looping sample has to be looped BEFORE it is filtered, not after.
+   *
+   * The envelope keeps moving across the loop join - that is the whole point of a long note -
+   * so filtering three seconds and then repeating the result would replay the same three
+   * seconds of sweep over and over. Laid end to end first, the filter runs down the whole
+   * note once, exactly as the machine does.
+   *
+   * Without this the renderer quietly capped every note at the sample's own length, which is
+   * what the plan looping is meant to escape.
+   */
+  var source = words;
+  if (smp.loopMode !== 'O' && n > words.length) {
+    source = new Int16Array(n);
+    for (var k = 0; k < n; k++) source[k] = words[k % words.length];
+  }
+
+  var filtered = Audio.filterWords(source, RATE, closing, 8);
   var vca = Audio.vcaEnvelope(kg, zone, clip.velocity);
 
   var buf = new Float32Array(n);
@@ -103,7 +120,7 @@ var all = new Float32Array(total);
 
 run.clips.forEach(function (c) {
   // enough room for the note to run out past the key coming up
-  var span = Math.min(plan.TIMING.hold + plan.TIMING.gap * 0.8, words.length / RATE);
+  var span = c.hold + plan.TIMING.gap * 0.9;
   var piece = renderNote(c, span);
   var at = Math.round(c.from * RATE);
 

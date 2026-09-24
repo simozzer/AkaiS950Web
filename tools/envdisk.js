@@ -109,9 +109,26 @@ function buildDisk(name, log) {
   say('building ' + PROGRAM + ': ' + words.length + ' words of noise at ' + RATE +
       ' Hz, ' + kgs.length + ' keygroups');
 
-  // One-shot, not looped: the release clips have to hear the note run on past the key
-  // coming up, and three seconds is longer than the longest of them needs.
-  disk.addSample(SAMPLE, words, RATE, 60, 0, 'O');
+  /*
+   * Looped when the plan asks, one-shot otherwise.
+   *
+   * A one-shot sample caps every note at three seconds, which caps every envelope at
+   * something fast, which is what made the shape of the fall unmeasurable in the first three
+   * runs. Looping costs nothing - the same noise, with its loop points set - and lets a note
+   * last as long as the key is held, so the envelope can be slow enough to read properly.
+   */
+  disk.addSample(SAMPLE, words, RATE, 60, 0, plan.LOOPING ? 'L' : 'O');
+
+  if (plan.LOOPING) {
+    // the whole sample is the loop: the machine plays end-length..end, so an end of n and a
+    // length of n is every word of it, round and round
+    var e = null;
+    disk.entries.forEach(function (x) {
+      if (x.type === 'S' && x.name.trim().toUpperCase() === SAMPLE) e = x;
+    });
+    if (e) disk.setLoop(e, words.length, words.length, 'L');
+    say('  looped, so a note lasts as long as it is held');
+  }
 
   disk.addProgram(PROGRAM);
   var prog = findProgram(disk);

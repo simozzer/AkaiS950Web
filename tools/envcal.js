@@ -26,6 +26,19 @@ var planFile = './envplan.js';
 for (var ai = 0; ai < args.length; ai++) {
   if (args[ai] === '--plan') { planFile = './' + args[ai + 1].split(/[/]/).pop(); args.splice(ai, 2); break; }
 }
+
+/*
+ * --json out.json writes everything measured, as measured.
+ *
+ * A constant that gets into the engines by being read off a printed table and typed into a
+ * header is a constant with a transcription in front of it. The numbers that matter here are
+ * fitted against the rendered run to cancel the analysis's own bias, which is arithmetic
+ * across two takes - exactly the kind that should be done by machine.
+ */
+var jsonOut = null;
+for (var aj = 0; aj < args.length; aj++) {
+  if (args[aj] === '--json') { jsonOut = args[aj + 1]; args.splice(aj, 2); break; }
+}
 var plan = require(planFile);
 var Akai = require('../akai.js');
 var Audio = require('../audio.js');
@@ -100,6 +113,41 @@ var placed = align();
 var slot = placed.map;
 
 /*
+ * A note inside a run of sound that the splitter could not cut up is still a note.
+ *
+ * align() gives each found clip to one planned note, which is right when the splitter has
+ * found the notes. It has not always: a long amplitude release leaves the gap quiet rather
+ * than silent, and three release notes plus the clip after them came back as one continuous
+ * 42-second stretch. Those three were then dropped for having no clip of their own, on a take
+ * where every one of them is perfectly audible - the measurements read from the plan's
+ * timeline, not from the clip edges, so the split never mattered to them in the first place.
+ *
+ * So after the offset is settled, anything still unplaced is looked for inside the clips:
+ * if the whole note lies within a found stretch that is longer than the note itself, it is
+ * there. This runs second and does not score, because letting containment count towards the
+ * alignment would reward an offset that swallows the run in one clip.
+ */
+var rescued = 0;
+wanted.forEach(function (c, i) {
+  if (slot[i] >= 0) return;
+
+  /*
+   * Overlap rather than containment: the splitter trims the ends as well as merging the
+   * middles. The stretch that swallowed the release section stopped five seconds before the
+   * fourteen-second note at the end of it did, so asking for the whole note to be inside
+   * still threw that one away. Two thirds of it inside a run of sound is enough to say the
+   * note is in there.
+   */
+  var a = c.from + placed.offset, b = a + c.hold;
+  for (var j = 0; j < found.clips.length; j++) {
+    var s = found.clips[j].seconds;
+    if (s[1] - s[0] <= c.hold * 1.2) continue;           // not a merge, just a clip
+    var over = Math.min(b, s[1]) - Math.max(a, s[0]);
+    if (over >= c.hold * 0.6) { slot[i] = j; rescued++; break; }
+  }
+});
+
+/*
  * Say what is actually wrong with a take that cannot be read.
  *
  * "only -1 of 14 clips could be placed" is what this used to print for a recording with no
@@ -141,8 +189,25 @@ if (placed.score < 2) {
  * fatal for the release section, which is timed from the note coming up.
  */
 function onsetNear(when) {
+  /*
+   * Look back most of a gap, not a second.
+   *
+   * The splitter trims about a second and a half off the front of every note - it reports a
+   * settled run of sound rather than an edge - so a window of a second either side of its
+   * answer can lie entirely INSIDE the note. There is then no silence in it to measure an
+   * onset against: the twentieth percentile is the note itself, the bar sits above
+   * everything, and the search either fails or returns the loudest moment somewhere in the
+   * middle. The whole take is then read a second and a half late, which is longer than most
+   * of what this run is trying to measure - attack 70 and attack 80 both came back as flat
+   * lines at the top of their travel, identical to the digit, because each was over before
+   * the trace began.
+   *
+   * The gap is silent by construction and no note reaches across it, so looking back most of
+   * one guarantees the window contains the silence this needs.
+   */
+  var back = Math.max(1.0, plan.TIMING.gap * 0.8);
   var frame = Math.max(64, Math.round(w.rate * 0.01));
-  var from = Math.max(0, Math.round((when - 1.0) * w.rate));
+  var from = Math.max(0, Math.round((when - back) * w.rate));
   var to = Math.min(w.samples.length, Math.round((when + 1.0) * w.rate));
 
   var levels = [];
@@ -174,7 +239,9 @@ var startedAt = offsets.length ? offsets[Math.floor(offsets.length / 2)] : place
 
 console.log('');
 console.log('take: ' + (w.samples.length / w.rate).toFixed(1) + 's at ' + w.rate + ' Hz, ' +
-            placed.score + ' of ' + wanted.length + ' clips, peak ' +
+            (placed.score + rescued) + ' of ' + wanted.length + ' clips' +
+            (rescued ? ' (' + rescued + ' of them inside a stretch the splitter could not cut)' : '') +
+            ', peak ' +
             found.peakDb.toFixed(1) + ' dBFS');
 console.log('      notes begin ' + startedAt.toFixed(2) + 's from where the plan puts them');
 
@@ -208,19 +275,84 @@ wanted.forEach(function (c, i) {
  */
 var REFERENCE_TOP = 150;
 
-function corner(samples) {
+/*
+ * `referenceTop` raises that ceiling for callers that know their corner stays well above it.
+ *
+ * 150 Hz is only 22 bands, and 22 bands is not enough to average over a quarter-second
+ * window: the levelling then carries a few dB of scatter, and a few dB is more than the 3
+ * this is looking for, so the crossing is found immediately and the corner comes back at a
+ * couple of hundred hertz on a clip sitting at nine thousand. Measured on rendered audio at
+ * a known 2210 Hz, six windows each:
+ *
+ *              ref<150   ref<400
+ *     0.20s      1/6       3/6
+ *     0.25s      3/6       5/6
+ *     0.30s      4/6       6/6
+ *
+ * Below a quarter of a second nothing saves it, and above 400 Hz there is little more to
+ * gain - but between those, a wider reference is the difference between a trace and noise.
+ * The trajectory section picks its own ceiling from a coarse first pass; everything else
+ * keeps 150, because the floor clips really do close to 311 Hz and a 400 Hz reference would
+ * be sitting on the roll-off it is trying to measure.
+ */
+/*
+ * The source's spectrum over the same stretch of the loop the window is looking at.
+ *
+ * Dividing by the sample's own spectrum is what makes every measurement here independent of
+ * what the noise happens to be - but the whole sample's spectrum is only the right divisor
+ * for a window that covers the whole sample. Over a quarter of a second it is the wrong one:
+ * three seconds of noise is flat on average and emphatically not flat in any given quarter
+ * second, so a window landing on a stretch that dips reads that dip as the filter's.
+ *
+ * It is not scatter, either - it repeats. The sample loops every three seconds, so the same
+ * unlucky stretch comes round again and misreads again, identically. Release 70 traced 1845
+ * Hz at 3.63s and 1845 Hz at 6.63s on a note steady at 2305, and a median filter cannot tell
+ * that from a real measurement because it happens for several windows together.
+ *
+ * Constant pitch is set on every keygroup in the run, so the sample plays at its own rate
+ * whatever key it is on, and the source offset is simply the time since the note began. On
+ * the same steady 2305 Hz corner, across two turns of the loop:
+ *
+ *     whole-sample divisor    168 .. 2356 Hz
+ *     position-matched       2291 .. 2303 Hz
+ *
+ * The long-window analyses keep the whole-sample divisor: they average over several turns of
+ * the loop, which is the case it was always right for.
+ */
+var srcSpecCache = {};
+
+function srcSpecFor(seconds, lengthSeconds) {
+  var n = Math.round(lengthSeconds * smp.sampleRate);
+  if (n < 2048) return srcSpec;
+
+  var at = Math.round(seconds * smp.sampleRate);
+  if (!plan.LOOPING && at + n > source.length) return srcSpec;
+  at = ((at % source.length) + source.length) % source.length;
+
+  var key = at + ':' + n;
+  if (srcSpecCache[key]) return srcSpecCache[key];
+
+  var piece = new Float64Array(n);
+  for (var i = 0; i < n; i++) piece[i] = source[(at + i) % source.length];
+
+  return (srcSpecCache[key] = cal.spectrum(piece, smp.sampleRate, cal.BANDS));
+}
+
+function corner(samples, referenceTop, against) {
   if (!samples || samples.length < 2048) return null;
+  var top  = referenceTop || REFERENCE_TOP;
+  var ss   = against || srcSpec;
   var spec = cal.spectrum(samples, w.rate, cal.BANDS);
 
   var ref = 0, n = 0;
   for (var j = 0; j < cal.BANDS.length; j++)
-    if (cal.BANDS[j] < REFERENCE_TOP) { ref += spec[j].db - srcSpec[j].db; n++; }
-  if (n < 3) { ref = 0; for (var j2 = 0; j2 < 3; j2++) ref += spec[j2].db - srcSpec[j2].db; n = 3; }
+    if (cal.BANDS[j] < top) { ref += spec[j].db - ss[j].db; n++; }
+  if (n < 3) { ref = 0; for (var j2 = 0; j2 < 3; j2++) ref += spec[j2].db - ss[j2].db; n = 3; }
   ref /= n;
 
   for (var k = 1; k < cal.BANDS.length; k++) {
-    var a = (spec[k - 1].db - srcSpec[k - 1].db) - ref;
-    var b = (spec[k].db - srcSpec[k].db) - ref;
+    var a = (spec[k - 1].db - ss[k - 1].db) - ref;
+    var b = (spec[k].db - ss[k].db) - ref;
     if (b <= -3 && a > -3) {
       var t = (a + 3) / (a - b);
       return cal.BANDS[k - 1] * Math.pow(cal.BANDS[k] / cal.BANDS[k - 1], t);
@@ -242,6 +374,69 @@ function srcAt(hz) {
     return srcSpec[i - 1].db + t * (srcSpec[i].db - srcSpec[i - 1].db);
   }
   return srcSpec[srcSpec.length - 1].db;
+}
+
+/*
+ * The power at ONE frequency, with nothing smoothed into it.
+ *
+ * cal.spectrum averages every band with its two neighbours either side, which is right for
+ * the dense log ladder it was built for - those bands are a couple of hertz apart and the
+ * response across them really is smooth - and wrong for a handful of probes spanning an
+ * octave and a half. Handed seven of those it smears each one with frequencies far away,
+ * and the sweep passing a probe stops being visible at all: crossings came out scattered
+ * and not even in order.
+ *
+ * So the probes get their own measurement. Hann windows, Goertzel at the one frequency,
+ * averaged across the windows the way spectrum does - just without the smoothing.
+ */
+/*
+ * A NARROW BAND, not a single frequency.
+ *
+ * The power of noise in one bin scatters by about its own size: over a twelfth of a second
+ * only two windows can be averaged, which leaves several dB of scatter on a measurement
+ * whose threshold is three. Crossings then land wherever the noise put them, and came out
+ * neither monotone nor in the right decade.
+ *
+ * So each probe is nine frequencies spread across a twentieth either side, averaged. The
+ * filter's response is flat to a hundredth of a dB over a span that narrow, and the nine
+ * estimates are independent, so the scatter drops by three. The time resolution is untouched,
+ * which is the point - widening the window instead would have cost exactly what this is
+ * trying to measure.
+ */
+var SUB_PROBES = 9, SUB_SPREAD = 0.05;
+
+function powerAt(x, hz) {
+  if (!x || x.length < 512) return 0;
+
+  var win = Math.min(2048, 1 << Math.floor(Math.log2(x.length)));
+  var hop = Math.max(1, Math.floor(win / 2));
+
+  var window = new Float64Array(win);
+  for (var i = 0; i < win; i++) window[i] = 0.5 - 0.5 * Math.cos(2 * Math.PI * i / (win - 1));
+
+  var total = 0, n = 0;
+
+  for (var p = 0; p < SUB_PROBES; p++) {
+    var f = hz * (1 + SUB_SPREAD * (2 * p / (SUB_PROBES - 1) - 1));
+    var c = 2 * Math.cos(2 * Math.PI * f / w.rate);
+
+    for (var at = 0; at + win <= x.length; at += hop) {
+      var s1 = 0, s2 = 0;
+      for (var j = 0; j < win; j++) {
+        var s = x[at + j] * window[j] + c * s1 - s2;
+        s2 = s1; s1 = s;
+      }
+      total += Math.max(s1 * s1 + s2 * s2 - c * s1 * s2, 0);
+      n++;
+    }
+  }
+  return n ? total / n / win : 0;
+}
+
+/** The same, in decibels and with the source's own level at that frequency divided out. */
+function levelAt(x, hz) {
+  var p = powerAt(x, hz);
+  return (p > 0 ? 10 * Math.log10(p) : -300) - srcAt(hz);
 }
 
 function rms(x) {
@@ -537,6 +732,542 @@ if (result.opening && result.closing) {
   result.symmetry = ratio;
 }
 
+/*
+ * The SHAPE of a sweep, without needing to know where it started or where it ends.
+ *
+ * If the cutoff moves in a straight line in octaves, then the moment it passes any frequency
+ * is a straight-line function of the logarithm of that frequency. So watch a handful of fixed
+ * probes, note when the response at each drops 3 dB, and fit time against log frequency: a
+ * straight line means linear in octaves, and the residual says how straight.
+ *
+ * Neither end of the sweep comes into it, which is the point. Both are hard to measure while
+ * the thing is moving, and both are where the earlier attempts came unstuck - run 1 and run 2
+ * disagreed by two and a half times for the same setting precisely because each converted a
+ * crossing into a time by ASSUMING this shape.
+ */
+if (sections.shape && sections.shape.at.length) {
+  console.log('');
+  console.log('SHAPE  -  is the sweep a straight line in octaves?');
+
+  result.shape = [];
+
+  sections.shape.at.forEach(function (i) {
+    var c = wanted[i];
+    var probes = c.probes;
+    if (!probes || !probes.length) return;
+
+    console.log('');
+    console.log('   ' + c.section + ' / ' + c.label);
+
+    // a note that is let go is measured from the release; one that is held, from the strike
+    var begins = c.hold < plan.TIMING.hold ? c.hold : 0.0;
+    var loud = rms (during (i, begins + 0.05, begins + 0.35));
+
+    var win = 0.08, hop = win / 2;
+    var reference = probes[0] * 0.08;              // well below the sweep, still in the pass
+    var trace = [];
+
+    for (var t = 0; t < 2.6; t += hop) {
+      var span = during(i, begins + t, begins + t + win);
+      if (span === null || rms (span) < loud * 0.02) break;
+
+      var base = levelAt (span, reference);      // the passband, to measure the probes against
+
+      trace.push({
+        t: t + win / 2,
+        db: probes.map(function (hz) { return levelAt (span, hz) - base; })
+      });
+    }
+
+    if (trace.length < 3) { console.log('      the note was gone too soon to follow'); return; }
+
+    /*
+     * When each probe was passed, searched from the STOPBAND end.
+     *
+     * Taking the first dip below -3 dB finds noise rather than the sweep. A probe sitting in
+     * the passband reads about zero with a decibel or so of scatter, and over sixty windows
+     * and seven probes something will dip three decibels by chance - so first-crossing put
+     * 2700 Hz at 0.34 s when the sweep did not reach it until 2.05.
+     *
+     * The far side has no such problem. Once the sweep has gone past, the probe is twenty or
+     * thirty decibels down, and no amount of scatter brings it back over the threshold. So
+     * for a falling sweep the crossing is searched backwards from the end, and for a rising
+     * one - which starts in the stopband instead - forwards from the beginning.
+     */
+    var crossings = [];
+    probes.forEach(function (hz, k) {
+      var found = null;
+
+      if (c.rising) {
+        for (var n = 1; n < trace.length && found === null; n++)
+          if (trace[n].db[k] >= -3 && trace[n - 1].db[k] < -3) found = n;
+      } else {
+        for (var m = trace.length - 1; m >= 1 && found === null; m--)
+          if (trace[m].db[k] <= -3 && trace[m - 1].db[k] > -3) found = m;
+      }
+
+      if (found === null) return;
+
+      var before = trace[found - 1].db[k], now = trace[found].db[k];
+      var f = (before + 3) / (before - now);
+      crossings.push({ hz: hz,
+                       t: trace[found - 1].t + f * (trace[found].t - trace[found - 1].t) });
+    });
+
+    crossings.sort(function (a, b) { return a.t - b.t; });
+
+    if (crossings.length < 4) {
+      console.log('      only ' + crossings.length + ' of ' + probes.length +
+                  ' probes were crossed - the sweep did not span them');
+      return;
+    }
+
+    // fit time against log2(frequency); straight means linear in octaves
+    var n2 = crossings.length, sx = 0, sy = 0, sxx = 0, sxy = 0;
+    crossings.forEach(function (p) {
+      var x = Math.log2(p.hz);
+      sx += x; sy += p.t; sxx += x * x; sxy += x * p.t;
+    });
+    var slope = (n2 * sxy - sx * sy) / (n2 * sxx - sx * sx);
+    var intercept = (sy - slope * sx) / n2;
+
+    var worst = 0, span = 0;
+    crossings.forEach(function (p) {
+      worst = Math.max(worst, Math.abs(p.t - (slope * Math.log2(p.hz) + intercept)));
+    });
+    span = crossings[crossings.length - 1].t - crossings[0].t;
+
+    crossings.forEach(function (p) {
+      console.log('      ' + p.hz.toFixed(0).padStart(6) + ' Hz  passed at ' +
+                  p.t.toFixed(3) + 's   line says ' +
+                  (slope * Math.log2(p.hz) + intercept).toFixed(3) + 's');
+    });
+
+    /*
+     * Straight or not, judged by the rate at each END rather than by the scatter.
+     *
+     * "How far is the worst point from the line" answers the wrong question: it is dominated
+     * by the measurement's own noise, which on a sweep the model makes perfectly straight
+     * still comes to a tenth of the span. Set a threshold below that and everything reads
+     * curved; set it above and nothing ever will.
+     *
+     * Curvature has a direction, and noise does not. So the crossings are split in half and
+     * each half given its own rate: a straight line gives the same rate twice, and a fall
+     * that decelerates - which is what an exponential envelope would do - gives a slower
+     * second half. The ratio says both whether it bends and which way.
+     */
+    var half = Math.floor(crossings.length / 2);
+    var firstOct = Math.abs(Math.log2(crossings[0].hz / crossings[half].hz));
+    var lastOct = Math.abs(Math.log2(crossings[half].hz / crossings[crossings.length - 1].hz));
+    var firstSec = crossings[half].t - crossings[0].t;
+    var lastSec = crossings[crossings.length - 1].t - crossings[half].t;
+
+    var early = firstSec > 0 ? firstOct / firstSec : 0;
+    var late = lastSec > 0 ? lastOct / lastSec : 0;
+    var bend = early > 0 ? late / early : 1;
+
+    var crooked = span > 0 ? worst / span : 0;
+    console.log('      ' + Math.abs(1 / slope).toFixed(2) + ' octaves per second overall' +
+                '   scatter ' + (crooked * 100).toFixed(0) + '% of the sweep');
+    console.log('      first half ' + early.toFixed(2) + ' oct/s,  second half ' +
+                late.toFixed(2) + '  -  ' + bend.toFixed(2) + 'x');
+
+    /*
+     * Which SHAPE the crossings prefer, rather than how bent they look.
+     *
+     * Splitting them in half and comparing rates asks nine points for a second derivative,
+     * and the answer is swamped: on a sweep the model makes perfectly straight it came back
+     * anywhere from 0.42x to 2.01x. The crossings do carry the shape - that statistic just
+     * throws most of them away.
+     *
+     * So both candidates are fitted to all of the crossings and their residuals compared.
+     *
+     *   a straight ramp    the octaves fallen go as (1 - t/T), so t is a straight line
+     *                      against log2(f) - which is the fit already done above
+     *
+     *   an exponential     the octaves fallen go as exp(-t/tau), so t is a straight line
+     *                      against log(octaves fallen) instead
+     *
+     * The second needs to know where the sweep began, which is exactly what is hard to
+     * measure - so it is searched for rather than assumed, and the exponential gets its best
+     * possible start. Giving the rival model every advantage is the point: if the straight
+     * line still fits better, that means something.
+     */
+    var straight = worst;
+    var curved = Infinity, curvedStart = 0;
+
+    /*
+     * The search for where the sweep began is kept to what is physically possible.
+     *
+     * Left free it runs away: for a sweep starting at 8790 Hz it picked 24869, because a
+     * start far above the probes makes the exponential degenerate into the straight line and
+     * then fit the noise slightly better with its extra parameter. That is overfitting, not
+     * evidence, and it chose the exponential for seven of eleven sweeps the model had drawn
+     * as straight ramps.
+     *
+     * The plan puts every probe within a third of an octave of the sweep's ends, so the start
+     * is between 1.1 and 1.8 times the highest probe. And the exponential has to win by a
+     * clear margin rather than a hair, since it will always fit at least as well.
+     */
+    for (var s = 1.1; s <= 1.8; s *= 1.03) {
+      var start = crossings[0].hz * s;
+      var xs = [], ok = true;
+
+      crossings.forEach(function (p) {
+        var oct = Math.log2(start / p.hz);
+        if (oct <= 1e-6) { ok = false; return; }
+        xs.push(Math.log(oct));
+      });
+      if (!ok || xs.length !== crossings.length) continue;
+
+      var n3 = xs.length, ax = 0, ay = 0, axx = 0, axy = 0;
+      xs.forEach(function (x, k) {
+        ax += x; ay += crossings[k].t; axx += x * x; axy += x * crossings[k].t;
+      });
+      var b3 = (n3 * axy - ax * ay) / (n3 * axx - ax * ax);
+      var a3 = (ay - b3 * ax) / n3;
+
+      var w3 = 0;
+      xs.forEach(function (x, k) { w3 = Math.max(w3, Math.abs(crossings[k].t - (a3 * 1 + b3 * x))); });
+      if (w3 < curved) { curved = w3; curvedStart = start; }
+    }
+
+    console.log('      the straight ramp misses by ' + straight.toFixed(3) +
+                's at worst; the best exponential by ' + curved.toFixed(3) + 's');
+    console.log(curved < straight * 0.7
+      ? '      the crossings prefer an EXPONENTIAL, best fitted from ' +
+        curvedStart.toFixed(0) + ' Hz'
+      : '      nothing here beats a STRAIGHT RAMP');
+
+    /*
+     * The threshold is set by what this method does to a sweep that is known to be straight.
+     *
+     * Rendered through the model - whose envelope is a straight ramp by construction - the
+     * same statistic came back anywhere from 0.42x to 2.01x across eleven clips. That is the
+     * noise floor, and it is large: the crossings carry about a tenth of a second of scatter
+     * each, and asking a handful of them for a second derivative is asking a lot.
+     *
+     * So this catches a gross departure and nothing finer. An exponential fall would show as
+     * a second half several times slower, which is well outside that band; a mild bend would
+     * not show at all. Anything inside the band is reported as "no bend this can see",
+     * which is not the same as straight and should not be written down as though it were.
+     */
+    console.log(bend > 0.4 && bend < 2.1
+      ? '      no bend this method can see - the noise floor here is 0.4x to 2.1x'
+      : bend <= 0.4
+        ? '      DECELERATING, and well past the noise - not a straight ramp'
+        : '      ACCELERATING, and well past the noise - nothing in the model does that');
+
+    result.shape.push({ label: c.label, section: c.section,
+                        octavesPerSecond: Math.abs(1 / slope), bend: bend });
+  });
+}
+
+/*
+ * The whole trajectory of a slow sweep, measured rather than inferred.
+ *
+ * This is what the looping sample bought. A three-second note forced every envelope to be
+ * fast, a fast sweep can only be followed in short windows, and a short window cannot find a
+ * corner - so the first three runs had to work from threshold crossings carrying a tenth of a
+ * second of scatter each, and the shape never came out of them.
+ *
+ * With fourteen seconds a decay of 95 takes nine of them, and a half-second window smears the
+ * sweep by a tenth of an octave while measuring the corner to a hundredth. So the corner is
+ * simply measured, twenty times down the sweep, and the shape read off the result.
+ */
+if (sections.trajectory && sections.trajectory.at.length) {
+  console.log('');
+  console.log('TRAJECTORY  -  the cutoff measured all the way along');
+
+  result.trajectory = [];
+
+  sections.trajectory.at.forEach(function (i) {
+    var c = wanted[i];
+    console.log('');
+    console.log('   ' + c.section + ' / ' + c.label);
+
+    // a released note is watched from the key coming up; a held one from the strike
+    var begins = c.section === 'release' ? c.hold : 0.0;
+    var span = c.section === 'release' ? plan.TIMING.gap * 0.9 : c.hold - 0.3;
+
+    /*
+     * The window follows the note rather than being fixed at half a second.
+     *
+     * Half a second is right for a decay of 95, which takes nine of them, and useless for an
+     * attack of 50, which is over in a seventh of one. The attacks in this run span a factor
+     * of forty in time, so the window is cut to a fortieth of the stretch being watched and
+     * floored at an eighth of a second, below which a corner stops being measurable at all:
+     * the reference bands this levels against are under 150 Hz, and an eighth of a second is
+     * eighteen cycles of the lowest of them.
+     *
+     * A fortieth rather than a twentieth because the plan floors its short holds at six
+     * seconds - there is nothing to watch once a fast rise has finished, but the hold cannot
+     * shrink below what the settled reading needs - so a span sized for the settling is
+     * several times longer than the sweep inside it. At a twentieth, attack 50 got one point
+     * on its rise and attack 55 got one as well, and the two came back with the same trace.
+     */
+    var win = Math.max(0.25, Math.min(0.5, span / 40));
+    var hop = win / 2;
+    var loud = rms (during (i, begins + 0.1, begins + 0.6));
+
+    /*
+     * A coarse pass first, to find out how low this clip goes.
+     *
+     * The fine trace needs a reference well below its own corner and as wide as it can
+     * safely be, and only the clip itself can say where "safely" is. Half-second windows are
+     * reliable with the fixed 150 Hz reference, so they are used to find the bottom of the
+     * sweep; the twentieth percentile rather than the minimum, because the few readings that
+     * do fail at this width all fail LOW and the minimum would be one of them.
+     *
+     * A quarter of the answer leaves two octaves of clearance, which every clip in this
+     * section has: they all sweep from a base of stored 50, and nothing here is asked to
+     * close below it.
+     */
+    var rough = [];
+    for (var ct = 0; ct + 0.5 < span; ct += 0.5) {
+      var cAudio = during(i, begins + ct, begins + ct + 0.5);
+      if (cAudio === null || rms (cAudio) < loud * 0.3) break;
+      var cHz = corner(cAudio, REFERENCE_TOP, srcSpecFor(begins + ct, 0.5));
+      if (cHz) rough.push(cHz);
+    }
+    rough.sort(function (a, b) { return a - b; });
+
+    var refTop = rough.length
+      ? Math.max(REFERENCE_TOP, Math.min(1100, rough[Math.floor(rough.length * 0.2)] / 4))
+      : REFERENCE_TOP;
+
+    var trace = [];
+
+    for (var t = 0; t + win < span; t += hop) {
+      var audio = during(i, begins + t, begins + t + win);
+      if (audio === null) break;
+
+      /*
+       * A window the note has stopped under measures the room, not the filter.
+       *
+       * Every held clip here sustains at full, so its level is flat until the key comes up:
+       * a window whose level has collapsed is one that has run off the end of the note, and
+       * the corner read from it is whatever the noise floor happens to do. One came back at
+       * 332 Hz on a clip that never went below 8800, and that single point at the end of the
+       * trace doubled the reported travel and with it every shape fitted to it. A releasing
+       * clip is meant to fade, so there the old and much lower bar still stands.
+       */
+      if (rms (audio) < loud * (c.section === 'release' ? 0.02 : 0.5)) break;
+
+      /*
+       * A corner near its own reference is not a corner.
+       *
+       * The levelling assumes the reference bands are passband, so a reading that comes back
+       * close to them contradicts the measurement that produced it - it is the scatter in the
+       * reference being read as a roll-off. One such point at 318 Hz, on a clip that never
+       * went below 2210, turned 1.2 octaves of travel into 4.8 and took every shape fitted to
+       * it along. Half an octave of clearance is the least that means anything.
+       */
+      var hz = corner(audio, refTop, srcSpecFor(begins + t, win));
+      if (hz === null || hz > CEILING * 1.05) continue;
+      if (hz < Math.max(FLOOR * 0.9, refTop * 1.5)) continue;
+      trace.push({ t: t + win / 2, hz: hz });
+    }
+
+    if (trace.length < 6) { console.log('      only ' + trace.length + ' points - too few'); return; }
+
+    /*
+     * A median of three across the trace, before anything is read off it.
+     *
+     * Each window measures its corner on its own, so one that lands on an unlucky stretch of
+     * the noise misreads while both its neighbours are right: release 70 traced 2304, 2299,
+     * 1845, 2304 - a quarter of an octave low, twice in sixteen points. Nothing downstream
+     * survives that, because the travel is taken from the extremes and the arrival is
+     * measured against them: those two points stretched a 1.2-octave release to 1.9 and moved
+     * its finish from 1.1 seconds to 3.4, while the shape fitted to the same trace was
+     * reporting the right answer all along.
+     *
+     * A median of three is the filter this wants rather than an average. The sweep is
+     * monotone, so three consecutive points are already in order and the middle one comes
+     * through untouched - no smearing of the thing being measured - while an isolated spike
+     * is discarded by construction. The two ends keep their own value.
+     */
+    trace = trace.map(function (p, m) {
+      if (m === 0 || m === trace.length - 1) return p;
+      var three = [trace[m - 1].hz, p.hz, trace[m + 1].hz].sort(function (a, b) { return a - b; });
+      return { t: p.t, hz: three[1] };
+    });
+
+    var all = trace.map(function (p) { return p.hz; });
+    var lo = Math.min.apply(null, all), hi = Math.max.apply(null, all);
+    var travel = Math.log2(hi / lo);
+
+    if (travel < 0.5) {
+      console.log('      it moved ' + travel.toFixed(2) + ' octaves - too little to read a shape from');
+      return;
+    }
+
+    trace.forEach(function (p, n) {
+      if (n % 3 && n !== trace.length - 1) return;
+      console.log('      ' + p.t.toFixed(2).padStart(6) + 's  ' + p.hz.toFixed(0).padStart(6) + ' Hz');
+    });
+
+    /*
+     * How far along it is, as a fraction of its own travel: 0 where it starts, 1 where it
+     * ends. Then the two candidate shapes are fitted to that and their misses compared.
+     *
+     * Both get one free parameter - a time - so this is a fair comparison, unlike the
+     * crossing version where the exponential had a free start frequency as well and won by
+     * overfitting.
+     */
+    var moved = trace.map(function (p) {
+      var f = (Math.log2(p.hz) - Math.log2(lo)) / travel;         // 0..1, low to high
+      return { t: p.t, done: c.rising ? f : 1 - f };              // 0 at the start, 1 at the end
+    });
+
+    function missBy(shape, param) {
+      var worst = 0;
+      moved.forEach(function (p) { worst = Math.max(worst, Math.abs(p.done - shape(p.t, param))); });
+      return worst;
+    }
+
+    var last = moved[moved.length - 1].t;
+    var bestRamp = { miss: Infinity, T: 0 }, bestExp = { miss: Infinity, tau: 0 };
+
+    for (var k = 0.05; k <= 3.0; k *= 1.03) {
+      var T = last * k;
+      var mr = missBy(function (t, p) { return Math.min(1, t / p); }, T);
+      if (mr < bestRamp.miss) bestRamp = { miss: mr, T: T };
+
+      var me = missBy(function (t, p) { return 1 - Math.exp(-t / p); }, T);
+      if (me < bestExp.miss) bestExp = { miss: me, tau: T };
+    }
+
+    console.log('      it travelled ' + travel.toFixed(2) + ' octaves over ' +
+                last.toFixed(1) + 's');
+
+    /*
+     * When it got there - the one number the attack section exists for.
+     *
+     * Read off the trace rather than fitted, so a sweep that is neither of the two candidate
+     * shapes still gives an answer: the first window whose corner is within a twentieth of an
+     * octave of the far end of the travel. A window averages the sweep passing through it, so
+     * this runs about half a window late; at the fast end that is most of what it reports,
+     * which is why the settled corner is worth more there than the shape is.
+     */
+    var target = c.rising ? hi : lo;
+    var arrived = null;
+    for (var q = 0; q < trace.length; q++)
+      if (Math.abs(Math.log2(trace[q].hz / target)) < 0.05) { arrived = trace[q].t; break; }
+
+    console.log(arrived === null
+      ? '      it had not settled by the end of the note'
+      : '      it was within a twentieth of an octave of the end by ' + arrived.toFixed(2) +
+        's  (windows of ' + win.toFixed(2) + 's, so about half of one late)');
+    console.log('      a straight ramp misses by ' + bestRamp.miss.toFixed(3) +
+                ' (over ' + bestRamp.T.toFixed(2) + 's);  an exponential by ' +
+                bestExp.miss.toFixed(3) + ' (time constant ' + bestExp.tau.toFixed(2) + 's)');
+
+    var verdict = bestRamp.miss < bestExp.miss * 0.7 ? 'a STRAIGHT RAMP'
+                : bestExp.miss < bestRamp.miss * 0.7 ? 'an EXPONENTIAL'
+                : 'neither clearly - they fit within 30% of each other';
+    console.log('      the measurements prefer ' + verdict);
+
+    result.trajectory.push({
+      label: c.label, section: c.section, setting: c.setting, travel: travel,
+      rampSeconds: bestRamp.T, tau: bestExp.tau, settledBy: arrived,
+      prefers: verdict
+    });
+  });
+}
+
+/*
+ * The settled corner where the envelope has finished, for the clips asking where the bottom
+ * of the filter's travel really is.
+ */
+if (sections.settled && sections.settled.at.length) {
+  console.log('');
+  console.log('THE FLOOR  -  how far down the cutoff will actually go');
+  console.log('   amount     corner      the model clamps at ' + FLOOR.toFixed(0) + ' Hz');
+
+  sections.settled.at.forEach(function (i) {
+    var m = steady(i);
+    console.log('     ' + String(wanted[i].setting).padStart(4) + '   ' +
+                (m ? m.hz.toFixed(0).padStart(6) + ' Hz' : '  not found'));
+    if (m) (result.floor || (result.floor = [])).push({ amount: wanted[i].setting, hz: m.hz });
+  });
+
+  /*
+   * Only the deepest two decide it.
+   *
+   * The section deliberately includes amounts that stop ABOVE the floor - they are what
+   * measures the slope on the way down, and what says the clips are working at all. Asking
+   * whether all four agree therefore always answers no: with -4 landing at 726 Hz by design,
+   * the spread came out at 1.25 octaves and the verdict read "the clamp is in the wrong
+   * place" off a set of clips that mostly never reached it.
+   *
+   * The two most negative amounts are the ones driven well past where the model stops, so
+   * they are the ones whose agreement means something.
+   */
+  if (result.floor && result.floor.length >= 2) {
+    var order = result.floor.slice().sort(function (a, b) { return a.amount - b.amount; });
+    var deep  = order.slice(0, 2);
+    var spread = Math.abs(Math.log2(deep[0].hz / deep[1].hz));
+    var bottom = Math.min(deep[0].hz, deep[1].hz);
+
+    console.log('');
+    console.log('   the two deepest (' + deep[0].amount + ' and ' + deep[1].amount +
+                ') are the ones driven past where the model stops');
+    console.log(spread < 0.08
+      ? '   they land in the same place, so there is a hard floor - and it is at ' +
+        bottom.toFixed(0) + ' Hz' +
+        (Math.abs(Math.log2(bottom / FLOOR)) < 0.08 ? ', where the model puts it'
+                                                    : ', NOT the ' + FLOOR.toFixed(0) + ' the model uses')
+      : '   they differ by ' + spread.toFixed(2) + ' octaves, so the cutoff is still moving ' +
+        'down there and there is no hard floor to find');
+  }
+}
+
+/*
+ * The amplitude envelope, watched as a level rather than a corner.
+ */
+if (sections.level && sections.level.at.length) {
+  console.log('');
+  console.log('LEVEL  -  the amplitude envelope on a long note');
+
+  sections.level.at.forEach(function (i) {
+    var c = wanted[i];
+    console.log('');
+    console.log('   ' + c.label);
+
+    var win = 0.25, hop = 0.125;
+    var trace = [];
+    for (var t = 0; t + win < c.hold - 0.2; t += hop) {
+      var audio = during(i, t, t + win);
+      if (audio === null) break;
+      trace.push({ t: t + win / 2, db: 20 * Math.log10(Math.max(rms (audio), 1e-9)) });
+    }
+
+    if (trace.length < 6) { console.log('      too few points'); return; }
+
+    var peak = Math.max.apply(null, trace.map(function (p) { return p.db; }));
+    trace.forEach(function (p, n) {
+      if (n % 4 && n !== trace.length - 1) return;
+      console.log('      ' + p.t.toFixed(2).padStart(6) + 's  ' +
+                  (p.db - peak).toFixed(1).padStart(7) + ' dB');
+    });
+
+    // where it passes -3 dB of its own travel, which is the time worth quoting
+    var floorDb = Math.min.apply(null, trace.map(function (p) { return p.db; }));
+    var halfway = (peak + floorDb) / 2;
+    var when = null;
+    for (var n2 = 1; n2 < trace.length; n2++) {
+      var a2 = trace[n2 - 1].db - halfway, b2 = trace[n2].db - halfway;
+      if ((a2 >= 0) !== (b2 >= 0)) {
+        when = trace[n2 - 1].t + (a2 / (a2 - b2)) * (trace[n2].t - trace[n2 - 1].t);
+        break;
+      }
+    }
+    console.log('      it moves ' + (peak - floorDb).toFixed(1) + ' dB' +
+                (when !== null ? ', halfway at ' + when.toFixed(2) + 's' : ''));
+  });
+}
+
 // ------------------------------------------------------------- 4. the release
 if (sections.release && sections.release.at.length) {
   console.log('');
@@ -586,14 +1317,12 @@ if (sections.release && sections.release.at.length) {
       var span = during(i, c.hold + t, c.hold + t + win);
       if (span === null || rms (span) < loud * 0.02) break;      // 34 dB down: too quiet
 
-      var spec = cal.spectrum(span, w.rate, probes);
-      var ref = cal.spectrum(span, w.rate, [startHz * 0.06]);    // a long way below the sweep
+      // one frequency at a time, unsmoothed - see powerAt
+      var base = levelAt (span, startHz * 0.06);     // a long way below the sweep
 
       trace.push({
         t: t + win / 2,
-        db: probes.map(function (hz, k) {
-          return (spec[k].db - srcAt(hz)) - (ref[0].db - srcAt(startHz * 0.06));
-        })
+        db: probes.map(function (hz) { return levelAt (span, hz) - base; })
       });
     }
 
@@ -672,3 +1401,9 @@ if (sections.release && sections.release.at.length) {
 }
 
 console.log('');
+
+if (jsonOut) {
+  fs.writeFileSync(jsonOut, JSON.stringify(result, null, 2));
+  console.log('wrote ' + jsonOut);
+  console.log("");
+}
