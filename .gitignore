@@ -36,6 +36,17 @@ node_modules/
 tools/LFOCAL.img
 tools/LFOCAL.hfe
 
+# The filter envelope disks, built from nothing by envdisk.js - noise from a fixed seed and
+# a programme whose every keygroup comes from the plan. Deterministic, so they are rebuilt
+# rather than carried, the same as LFOCAL above:
+#
+#   node tools/envdisk.js build tools/ENVCAL
+#   node tools/envdisk.js build tools/ENVCAL2 --plan envplan2.js
+tools/ENVCAL.img
+tools/ENVCAL.hfe
+tools/ENVCAL2.img
+tools/ENVCAL2.hfe
+
 # Cloudflare Pages serves landing/ and nothing else - one page whose only job is to link
 # to the GitHub Pages site, which is where the app actually lives. Deliberately not a copy
 # of the app: a second copy would need deploying on every change and would silently fall
