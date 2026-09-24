@@ -35,3 +35,14 @@ node_modules/
 #   node tools/lfodisk.js check tools/LFOCAL.img
 tools/LFOCAL.img
 tools/LFOCAL.hfe
+
+# Cloudflare Pages serves landing/ and nothing else - one page whose only job is to link
+# to the GitHub Pages site, which is where the app actually lives. Deliberately not a copy
+# of the app: a second copy would need deploying on every change and would silently fall
+# behind the moment one was missed.
+#
+#   wrangler pages deploy landing --project-name akais950web --branch main
+#
+# landing/ is source and is committed. .wrangler is wrangler's own cache of which account
+# it is talking to, and is not.
+.wrangler/

@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Akai S950 Studio</title>
+<meta name="description" content="Akai S900/S950 disk editor, in the browser. Hosted on GitHub Pages.">
+<style>
+  /* The app's own palette, so the two do not look like different projects. */
+  :root {
+    --ink: #16181d;
+    --muted: #5c6370;
+    --line: #d8dbe2;
+    --panel: #ffffff;
+    --ground: #f4f5f8;
+    --accent: #3e76b8;
+    --accent-dark: #1c4e8c;
+  }
+
+  * { box-sizing: border-box; }
+
+  html, body {
+    margin: 0;
+    min-height: 100%;
+    font: 15px/1.6 "Segoe UI", system-ui, -apple-system, Helvetica, Arial, sans-serif;
+    color: var(--ink);
+    background: var(--ground);
+  }
+
+  main {
+    max-width: 34rem;
+    margin: 0 auto;
+    padding: 4rem 16px;
+  }
+
+  .card {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    padding: 28px;
+  }
+
+  h1 { font-size: 20px; margin: 0 0 6px; letter-spacing: -0.01em; }
+
+  .sub { color: var(--muted); margin: 0 0 22px; }
+
+  a.go {
+    display: inline-block;
+    background: var(--accent);
+    color: #fff;
+    text-decoration: none;
+    padding: 10px 18px;
+    border-radius: 4px;
+    font-weight: 600;
+  }
+  a.go:hover, a.go:focus { background: var(--accent-dark); }
+
+  .note {
+    margin: 26px 0 0;
+    padding-top: 18px;
+    border-top: 1px solid var(--line);
+    color: var(--muted);
+    font-size: 13px;
+  }
+  .note a { color: var(--accent-dark); }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ink: #e6e8ec;
+      --muted: #9aa1ad;
+      --line: #2c313a;
+      --panel: #1b1e24;
+      --ground: #131519;
+      --accent: #5b91d0;
+      --accent-dark: #7db0e8;
+    }
+    :root:not([data-theme="light"]) a.go { color: #10131a; }
+  }
+</style>
+</head>
+<body>
+<main>
+  <div class="card">
+    <h1>Akai S950 Studio</h1>
+    <p class="sub">Read and edit Akai S900/S950 floppy images in the browser.</p>
+
+    <p><a class="go" href="https://simozzer.github.io/AkaiS950Web/">Open the app</a></p>
+
+    <p class="note">
+      The app itself lives on GitHub Pages, which publishes it automatically from
+      <a href="https://github.com/simozzer/AkaiS950Web">simozzer/AkaiS950Web</a> on every
+      change. This page only points there, so there is no second copy to fall behind.
+    </p>
+  </div>
+</main>
+</body>
+</html>
