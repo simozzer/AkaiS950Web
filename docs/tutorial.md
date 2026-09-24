@@ -52,6 +52,10 @@ Reading it from the top:
 - **The keyboard.** Every keygroup's range is washed pale; the selected one is solid. The
   caption names it and the sample it plays. Click a key to hear that keygroup's sample *at
   that key's pitch*, using the same varispeed the sampler uses.
+- **The velocity strip**, on the right of the keyboard, setting how hard that click
+  strikes. Velocity opens the filter — a little over an octave between a middling strike
+  and a hard one — so a program can sound as though it has no filter at all when every key
+  is being hit at full force. Drag it down and the same note closes right up.
 - **The keygroup numbers**, down the left. That is all they carry, because everything else
   about a keygroup is in the editor beside them. Hovering a number names its key range and
   sample, and a keygroup whose sample is not on this disk is marked.
@@ -144,6 +148,29 @@ it. If you need to cut something out of the middle, that is not here yet.
 converts it to the S950's 12-bit format. You choose the sample rate, the nominal pitch, the
 loop mode, whether to normalise, and how much of the file to use. It refuses outright if the
 result will not fit in the free blocks, and says by how much.
+
+## 7a. Move things between disks
+
+Open a second image and the file row grows a **Copy to** picker: it puts the selected
+sample or program onto any other disk that is open. A program never travels alone — every
+sample its zones name comes with it, or it would arrive silent — so a confirmation
+itemises the whole set and what it costs in blocks first.
+
+Nothing on the receiving disk is replaced. A name already taken by a *different* file is
+renamed, and the copied program's zones follow it to the new name; a name taken by the
+*same* file is skipped, so copying twice costs nothing the second time.
+
+**Copy to...** under the keygroup list moves a single keygroup onto another program. That
+one may land on a program on the same disk, which a whole-file copy will not do, and it
+brings only the samples its own zones name.
+
+## 7b. Take a sample out as a WAV
+
+**Export WAV** saves the selected sample as an ordinary 16-bit WAV at its own rate, for a
+DAW or another sampler. The whole sample comes out untrimmed, and the loop is not baked
+into the audio: it travels in the file's `smpl` chunk along with the root note, so a
+sampler that reads that chunk picks the loop up by itself and one that does not still gets
+the whole sound.
 
 ## 8. Write the disk back
 
