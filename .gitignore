@@ -50,6 +50,8 @@ tools/ENVCAL3.img
 tools/ENVCAL3.hfe
 tools/ENVCAL4.img
 tools/ENVCAL4.hfe
+tools/ENVCAL5.img
+tools/ENVCAL5.hfe
 
 # What envcal.js --json writes, for envfit.js to turn into the envelope table.
 #

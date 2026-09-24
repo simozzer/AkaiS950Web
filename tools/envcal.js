@@ -1235,12 +1235,50 @@ if (sections.level && sections.level.at.length) {
     console.log('');
     console.log('   ' + c.label);
 
-    var win = 0.25, hop = 0.125;
-    var trace = [];
-    for (var t = 0; t + win < c.hold - 0.2; t += hop) {
-      var audio = during(i, t, t + win);
-      if (audio === null) break;
-      trace.push({ t: t + win / 2, db: 20 * Math.log10(Math.max(rms (audio), 1e-9)) });
+    /*
+     * Short windows, because a level needs no spectrum.
+     *
+     * The corner analysis is stuck with quarter-second windows - it has to resolve bands
+     * under 150 Hz - but an rms is just as good over a fortieth of a second, and the fastest
+     * thing here may be under a tenth. At a quarter second an attack of 30 would have been
+     * two points and an answer to one significant figure.
+     */
+    function traceAt(win) {
+      var out = [], hop = win / 2;
+      for (var t = 0; t + win < c.hold - 0.2; t += hop) {
+        var audio = during(i, t, t + win);
+        if (audio === null) break;
+        out.push({ t: t + win / 2, db: 20 * Math.log10(Math.max(rms (audio), 1e-9)) });
+      }
+      return out;
+    }
+
+    /*
+     * Sized to the ramp, in two passes, because a window is an average.
+     *
+     * The rms over a window that covers a quarter of the rise is not the level at the middle
+     * of that window - it is pulled up towards the loud end, so the early points read as a
+     * shorter ramp than they came from. On a rendered attack of 40, whose ramp really is
+     * straight, the estimates spread 1.4x and the analysis called it not straight.
+     *
+     * A rough pass finds the length, then the real one uses a window a twenty-fifth of it, so
+     * the averaging is worth well under a per cent wherever it is read. That keeps the spread
+     * across the points meaning what it is quoted as meaning - whether the rise is a straight
+     * ramp - rather than measuring the window against the ramp.
+     */
+    var trace = traceAt(0.04);
+
+    if (c.rising && trace.length >= 6) {
+      var rough = [], top = Math.max.apply(null, trace.map(function (p) { return p.db; }));
+      trace.forEach(function (p) {
+        var g = Math.pow(10, (p.db - top) / 20);
+        if (g > 0.2 && g < 0.9 && p.t > 0) rough.push(p.t / g);
+      });
+      if (rough.length) {
+        rough.sort(function (x, y) { return x - y; });
+        var fine = rough[Math.floor(rough.length / 2)] / 25;
+        trace = traceAt(Math.max(0.008, Math.min(0.05, fine)));
+      }
     }
 
     if (trace.length < 6) { console.log('      too few points'); return; }
@@ -1252,19 +1290,155 @@ if (sections.level && sections.level.at.length) {
                   (p.db - peak).toFixed(1).padStart(7) + ' dB');
     });
 
-    // where it passes -3 dB of its own travel, which is the time worth quoting
     var floorDb = Math.min.apply(null, trace.map(function (p) { return p.db; }));
-    var halfway = (peak + floorDb) / 2;
-    var when = null;
-    for (var n2 = 1; n2 < trace.length; n2++) {
-      var a2 = trace[n2 - 1].db - halfway, b2 = trace[n2].db - halfway;
-      if ((a2 >= 0) !== (b2 >= 0)) {
-        when = trace[n2 - 1].t + (a2 / (a2 - b2)) * (trace[n2].t - trace[n2 - 1].t);
-        break;
+    console.log('      it moves ' + (peak - floorDb).toFixed(1) + ' dB');
+
+    /*
+     * Not "halfway in decibels", which was what this used to quote.
+     *
+     * Halfway between the loudest and quietest point of the trace is halfway between two
+     * things that depend on how much of the ramp happened to be visible - so the same
+     * envelope read over a different span gives a different answer, and two settings cannot
+     * be compared. It said VCA attack 70 was 0.43 s and attack 85 was 0.50, which would make
+     * fifteen units of the panel worth almost nothing; read properly they are 1.41 and 1.95.
+     *
+     * A rising level is a straight ramp in GAIN, so every point on it is its own estimate of
+     * the ramp's length: t divided by the gain there. Taking the median across the usable
+     * part of the trace uses the whole measurement instead of one crossing of it, and the
+     * spread says whether it really is a straight ramp - on the hardware those estimates
+     * agree to within 3%.
+     *
+     * A falling level is a straight line in DECIBELS, so it is quoted as the time to fall a
+     * fixed twenty of them: unambiguous, well clear of the noise, and independent of where
+     * the decay is heading.
+     */
+    if (c.rising) {
+      /*
+       * The ramp ends at the first point that reaches the top, and nothing after it counts.
+       *
+       * Scanning the whole trace for points under nine tenths of full does not do that. Once
+       * the window is short enough to resolve a fast rise it is also short enough to be
+       * noisy, and on a plateau a few hundred samples long a fair number of windows land
+       * under the bar by chance - each one then contributing an estimate of "the ramp" made
+       * from a time seconds after it finished. Attack 30 came back at 3.4 s from 2011 points
+       * spread 400x, when the rise it was measuring lasts a tenth of one.
+       *
+       * The rise is monotone, so the first crossing is the end of it, and the plateau is read
+       * as the median of the last third rather than the maximum - a maximum over noisy
+       * windows is the loudest excursion rather than the level.
+       */
+      var tail = trace.slice(Math.floor(trace.length * 2 / 3))
+                      .map(function (p) { return p.db; })
+                      .sort(function (x, y) { return x - y; });
+      var full = tail[Math.floor(tail.length / 2)];
+
+      var on = [];
+      for (var r = 0; r < trace.length; r++) {
+        var gain = Math.pow(10, (trace[r].db - full) / 20);
+        if (gain >= 0.9) break;
+        if (gain > 0.1) on.push({ t: trace[r].t, g: gain });
       }
+
+      if (on.length < 4) { console.log('      too little of the rise to read'); return; }
+
+      /*
+       * A straight line fitted to (time, gain), rather than a median of t divided by gain.
+       *
+       * t/g assumes the note began exactly when the plan says. It did not: the onset is found
+       * from the audio to about ten milliseconds, which is nothing against a ramp of ten
+       * seconds and fourteen per cent of one that lasts seventy milliseconds. Every fast clip
+       * came out short and scattered because of it, which looks exactly like a curve that is
+       * not a straight ramp.
+       *
+       * Fitting the line lets the onset be an unknown as well. The slope is 1/T whatever the
+       * start, and the intercept says where the rise really began - printed when it disagrees
+       * with the alignment, because a note that starts late by more than a window is a fact
+       * about the take worth knowing.
+       */
+      var n = on.length, st = 0, sg = 0;
+      on.forEach(function (p) { st += p.t; sg += p.g; });
+      var mt = st / n, mg = sg / n, num = 0, den = 0;
+      on.forEach(function (p) { num += (p.t - mt) * (p.g - mg); den += (p.t - mt) * (p.t - mt); });
+
+      if (den <= 0 || num <= 0) { console.log('      the rise does not rise'); return; }
+
+      var slope = num / den;
+      var T = 1 / slope;
+      var began = mt - mg / slope;
+
+      var worst = 0;
+      on.forEach(function (p) {
+        worst = Math.max(worst, Math.abs(p.g - (mg + slope * (p.t - mt))));
+      });
+
+      console.log('      a straight ramp of ' + T.toFixed(3) + 's' +
+                  '   (' + n + ' points, worst off the line ' + worst.toFixed(3) + ' of full)');
+      if (Math.abs(began) > 0.03)
+        console.log('      it began ' + (began * 1000).toFixed(0) +
+                    ' ms from where the note was placed');
+      if (worst > 0.06)
+        console.log('      NOT a straight ramp in gain - the points leave the line by ' +
+                    worst.toFixed(2) + ' of full scale, so this number is a summary and not a' +
+                    ' measurement');
+
+      (result.level || (result.level = [])).push(
+        { label: c.label, setting: c.setting, rising: true, seconds: T,
+          worst: worst, began: began });
+      return;
     }
-    console.log('      it moves ' + (peak - floorDb).toFixed(1) + ' dB' +
-                (when !== null ? ', halfway at ' + when.toFixed(2) + 's' : ''));
+
+    /*
+     * The fall as a RATE, fitted, and quoted as the time to lose twenty decibels.
+     *
+     * A single crossing of one threshold carries the onset's error whole - ten milliseconds
+     * is nothing on a slow decay and three per cent of a fast one - and throws away every
+     * other point in the trace. The decay is a straight line in decibels, so the line is what
+     * to fit; the slope is the rate however late the note was found, and the residual says
+     * whether it really is straight.
+     *
+     * The decays in this run are the control that the attacks are read against, so they need
+     * to be measured at least as well as the attacks are, or the comparison is between one
+     * good number and one rough one.
+     */
+    var DEPTH = 20;
+    var falling = [];
+    for (var n2 = 0; n2 < trace.length; n2++) {
+      var down = peak - trace[n2].db;
+      if (down > DEPTH + 6) break;             // into the sustain floor, no longer falling
+      if (down > 1) falling.push({ t: trace[n2].t, db: trace[n2].db });
+    }
+
+    if (falling.length < 4) {
+      console.log('      it never falls far enough to time');
+      return;
+    }
+
+    var fn = falling.length, ft = 0, fd = 0;
+    falling.forEach(function (p) { ft += p.t; fd += p.db; });
+    var fmt = ft / fn, fmd = fd / fn, fnum = 0, fden = 0;
+    falling.forEach(function (p) {
+      fnum += (p.t - fmt) * (p.db - fmd); fden += (p.t - fmt) * (p.t - fmt);
+    });
+
+    var rate = fden > 0 ? -fnum / fden : 0;    // decibels per second, positive going down
+    if (rate <= 0) { console.log('      it does not fall'); return; }
+
+    var fworst = 0;
+    falling.forEach(function (p) {
+      fworst = Math.max(fworst, Math.abs(p.db - (fmd - rate * (p.t - fmt))));
+    });
+
+    var fell = DEPTH / rate;
+    console.log('      it falls ' + DEPTH + ' dB in ' + fell.toFixed(3) + 's' +
+                '   (' + rate.toFixed(1) + ' dB/s over ' + fn + ' points, worst off the line ' +
+                fworst.toFixed(1) + ' dB)');
+    if (fworst > 2.0)
+      console.log('      NOT a straight line in decibels - off by ' + fworst.toFixed(1) +
+                  ' dB, so this rate is a summary and not a measurement');
+
+    (result.level || (result.level = [])).push(
+      { label: c.label, setting: c.setting, rising: false, seconds: fell,
+        depthDb: DEPTH, dbPerSecond: rate, worst: fworst });
   });
 }
 
