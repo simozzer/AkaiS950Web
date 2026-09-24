@@ -521,6 +521,29 @@ var AkaiAudio = (function () {
     // so provisional - but a measurement, where sharing the VCA's scale was a guess.
     VCF_TIME_SCALE: 0.78, // measured: 2.25 s against the VCA's 2.86
 
+    /*
+     * APPROXIMATE: the filter's release stops growing, at somewhere around a second.
+     *
+     * The envelope time curve is badly wrong for this one stage. Two takes, converting when
+     * the sweep passed a fixed probe into a release:
+     *
+     *     stored        50    60    70    80    90    99
+     *     run 1       0.35  0.38  0.42     -     -     -
+     *     run 2          -     -  1.04  1.09  1.05  1.09
+     *     the curve   0.14  0.35  0.88  2.24  5.67  13.1
+     *
+     * Run 2 covers stored 70 to 99, over which the curve climbs fifteenfold, and measures
+     * the same second throughout. Whatever the release does it does not follow the curve,
+     * and 13 seconds is not a thing this machine does.
+     *
+     * A cap is as much as the data carries. The two takes differ by 2.5x at stored 70, and
+     * that gap is a warning in itself: turning a probe crossing into a release assumes the
+     * fall is a straight line in octaves, so two sweeps of different depths disagreeing says
+     * it is not straight. Until something measures the SHAPE, a number fitted to these
+     * crossings would be precision that is not there.
+     */
+    VCF_RELEASE_MAX: 1.0, // approximate
+
     // Sustain is NOT a fraction of the amplitude. A stored 50 measured 19.7 dB down,
     // where a plain 50/99 of the amplitude would be 5.9 dB down - a 14 dB error, and
     // sustain varies in half the library's keygroups. It behaves as a straight count in
@@ -734,7 +757,9 @@ var AkaiAudio = (function () {
     var a = written ? envSeconds(kg.vcf[0]) * CAL.VCF_TIME_SCALE : 0;
     var d = written ? envSeconds(kg.vcf[1]) * CAL.VCF_TIME_SCALE : 0;
     var sustain = written ? clamp(kg.vcf[2], 0, 99) / 99 : 1;
-    var rel = written ? envSeconds(kg.vcf[3]) * CAL.VCF_TIME_SCALE : 0;
+    // capped: the filter's release stops growing about a second in - see VCF_RELEASE_MAX
+    var rel = written
+      ? Math.min(CAL.VCF_RELEASE_MAX, envSeconds(kg.vcf[3]) * CAL.VCF_TIME_SCALE) : 0;
     var depth = written ? ((kg.vcfAmount || 0) / 50) * CAL.ENV_OCTAVES : 0;
 
     // The filter is also the reconstruction filter, so its cutoff cannot go above the
