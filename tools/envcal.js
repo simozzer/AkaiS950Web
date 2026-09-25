@@ -1328,18 +1328,29 @@ if (sections.zone && sections.zone.at.length) {
                            towards: t, which: which });
       });
 
+      /*
+       * The byte is the LAST velocity of zone 1, so zone 2 should first answer one above it.
+       *
+       * This compared against the byte itself and reported every correct reading as "out by
+       * 1" - which is how run 6 found the error in the first place, and would now hide the
+       * fix. A switch of 127 or 128 puts zone 2 out of reach of any playable velocity, and
+       * seeing no handover there is the right answer rather than a failure to find one.
+       */
       var says = wanted[bySection[name][0]].velocitySwitch;
+      var expect = says + 1;
 
       if (blended)
         console.log('      ' + blended + ' clip(s) between the two samples - this is a ' +
                     'CROSSFADE, not a switch');
       else if (boundary === null)
-        console.log('      no handover seen in this sweep');
+        console.log('      no handover in this sweep' +
+                    (expect > 127 ? '  - and the byte says there cannot be one'
+                                  : '  - but the byte expects one at ' + expect));
       else
         console.log('      zone 2 first answers at velocity ' + boundary +
-                    ', and the byte says ' + says +
-                    (boundary === says ? '  - the model is right'
-                                       : '  - the model is out by ' + (boundary - says)));
+                    ', and the byte expects ' + expect +
+                    (boundary === expect ? '  - the model is right'
+                                         : '  - the model is out by ' + (boundary - expect)));
     });
   }
 }

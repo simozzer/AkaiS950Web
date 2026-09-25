@@ -736,16 +736,32 @@ var Akai = (function () {
    * desktop engine both have exactly this rule, and a rule three implementations are supposed
    * to share is worth being able to test on its own.
    *
-   * Byte 2 is read as MIDI velocity, and the boundary is inclusive at the bottom of zone 2.
-   * Both of those are assumptions rather than measurements: nothing has yet played a real
-   * S950 either side of a switch point to see which velocity first reaches the hard sample.
+   * THE BYTE IS THE LAST VELOCITY OF ZONE 1, NOT THE FIRST OF ZONE 2.
+   *
+   * All three engines had it the other way, out by one velocity step in the same direction -
+   * the kind of error that stays hidden precisely because everything agrees. Run 6 played a
+   * sine in zone 1 and noise in zone 2 across four switch points and read which answered:
+   *
+   *     switch    1     zone 1 at velocity 1,   zone 2 from 2
+   *     switch   64     zone 1 through 64,      zone 2 from 65
+   *     switch   90     zone 1 through 90,      zone 2 from 92   (91's clip was lost)
+   *     switch  127     zone 1 at 125,126,127,  zone 2 never
+   *
+   * The last line is the one that makes it certain rather than merely consistent: at a switch
+   * of 127 the hard sample cannot be reached at all, which only follows if zone 2 begins at
+   * 128. And it explains the panel's range, which the editor clamps to 1..128 - a switch of
+   * 128 means zone 1 runs to 128, so no playable velocity reaches zone 2. "128 turns the
+   * switch off" stops being a special case and becomes what the arithmetic already says.
+   *
+   * It is a switch and not a crossfade. Every clip read either 0.639 or 0.0001 of its energy
+   * at the tone's frequency, with nothing in between anywhere near a boundary.
    */
   function zoneForVelocity(kg, velocity) {
     var split = kg.velocitySwitch;
     if (!(split >= 1 && split <= 128)) split = 128;
 
     if (!kg.zone2 || !kg.zone2.inUse) return kg.zone1;
-    return velocity >= split ? kg.zone2 : kg.zone1;
+    return velocity > split ? kg.zone2 : kg.zone1;
   }
 
   Disk.prototype.keygroups = function (p) {

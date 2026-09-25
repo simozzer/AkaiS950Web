@@ -55,9 +55,10 @@ console.log('');
 
 var kg = keygroup(90);
 
-check('one below the switch is the soft sample',  nameAt(kg, 89) === 'SOFT', 'velocity 89');
-check('the switch value itself is the hard one',  nameAt(kg, 90) === 'HARD', 'velocity 90');
-check('and above it stays hard',                  nameAt(kg, 91) === 'HARD', 'velocity 91');
+check('one below the switch is the soft sample',   nameAt(kg, 89) === 'SOFT', 'velocity 89');
+check('the switch value itself is STILL the soft', nameAt(kg, 90) === 'SOFT', 'velocity 90');
+check('one above it is the hard sample',           nameAt(kg, 91) === 'HARD', 'velocity 91');
+check('and it stays hard',                         nameAt(kg, 92) === 'HARD', 'velocity 92');
 
 // The whole range, so nothing falls through a gap or answers twice.
 var soft = 0, hard = 0;
@@ -65,7 +66,9 @@ for (var v = 0; v <= 127; v++) (nameAt(kg, v) === 'SOFT' ? soft++ : hard++);
 
 check('every velocity from 0 to 127 reaches exactly one zone', soft + hard === 128,
       soft + ' soft, ' + hard + ' hard');
-check('and the split is where the switch puts it', soft === 90 && hard === 38);
+// 0..90 inclusive is 91 velocities, 91..127 is 37
+check('and the split is where the switch puts it', soft === 91 && hard === 37,
+      soft + ' soft, ' + hard + ' hard');
 
 // ------------------------------------------------------------------- the switch off
 
@@ -90,13 +93,18 @@ check('a keygroup whose second zone is unused plays zone 1 however hard',
 
 // ------------------------------------------------------------- the extremes of a split
 
+/*
+ * Both ends were measured on the hardware in run 6, and both were the wrong way round here.
+ */
 var low = keygroup(1);
-check('a switch of 1 leaves only velocity 0 to the soft sample',
-      nameAt(low, 0) === 'SOFT' && nameAt(low, 1) === 'HARD');
+check('a switch of 1 leaves velocity 1 to the soft sample, and 2 up to the hard',
+      nameAt(low, 1) === 'SOFT' && nameAt(low, 2) === 'HARD',
+      'the machine played the sine at 1 and noise from 2');
 
 var high = keygroup(127);
-check('a switch of 127 leaves only the hardest strike to zone 2',
-      nameAt(high, 126) === 'SOFT' && nameAt(high, 127) === 'HARD');
+check('a switch of 127 puts the hard sample out of reach entirely',
+      nameAt(high, 126) === 'SOFT' && nameAt(high, 127) === 'SOFT',
+      'the machine played the sine at 125, 126 and 127 alike');
 
 console.log('');
 console.log(checks + ' checks, ' + (fails === 0 ? 'ALL PASSED' : fails + ' FAILED'));

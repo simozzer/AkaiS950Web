@@ -758,7 +758,8 @@
     // and that is what 1,860 of the 1,908 keygroups on the original 101 disks hold. The
     // library never goes above it, and neither did the panel.
     field(2, 'Velocity switch', 1, 128).title =
-      'Where zone 1 hands over to zone 2. 128 turns the switch off and zone 1 takes every velocity.';
+      'The hardest velocity zone 1 answers. Zone 2 takes everything above it, so 128 turns ' +
+      'the switch off and zone 1 takes every velocity there is.';
     field(11, 'To loudness', 0, 99);
     field(7, 'To filter', 0, 99);
     field(9, 'To attack', 0, 99);
@@ -783,8 +784,10 @@
       var t = kg.raw[2];
       heading(t >= 128
         ? (which === 0 ? 'Zone 1  -  sample' : 'Zone 2  -  unused (velocity switch off)')
-        : (which === 0 ? title + '  -  soft (velocity 1-' + (t - 1) + ')'
-                       : title + '  -  hard (velocity ' + t + '-127)'));
+        // The byte is the LAST velocity of zone 1, measured on the hardware - see
+        // Akai.zoneForVelocity. This used to read 1-(t-1) and t-127, a step out either side.
+        : (which === 0 ? title + '  -  soft (velocity 1-' + t + ')'
+                       : title + '  -  hard (velocity ' + (t + 1) + '-127)'));
 
       box.appendChild(node('label', null, 'Sample'));
       var pick = document.createElement('select');
