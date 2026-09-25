@@ -256,6 +256,12 @@ Everything that checks the app, or was used to work the format out, lives beside
 | `lfodisk.js` | builds the `LFOCAL` disk from nothing: three generated tones and 28 keygroups |
 | `lfomidi.js` | writes that run as a Standard MIDI File |
 | `lfocal.js` | demodulates a take of it and reports what the LFO actually does |
+| `envplan.js` … `envplan5.js` | the five filter-envelope runs, each described once. The old ones stay so a take already recorded remains analysable after the plan has moved on |
+| `envdisk.js` | builds an `ENVCAL` disk from nothing: white noise from a fixed seed, and a programme whose every keygroup comes from the plan |
+| `envmidi.js` | writes one of those runs as a Standard MIDI File |
+| `envcal.js` | reads a take and settles what it can — `--json` writes the numbers out |
+| `envrender.js` | renders the same run through the emulation, so the analysis can be put through a take whose answers are already known |
+| `envfit.js` | turns the two result files into the envelope table, cancelling the analysis's own bias |
 | `probe.js`, `ram.js`, `zones.js`, `repair.js` | one-off diagnostics from working the format out |
 | `makezip.js` | builds the downloadable bundle — the page and what it loads, read out of `index.html` rather than listed by hand |
 | `make-expected.ps1` | dumps what the C# sees, for `test/verify.js` to diff against |
@@ -632,6 +638,78 @@ hear - Web Audio's scheduling, the voice handling, the release. The page used to
 `tools/benchcal.js` to read; it was removed once the model stopped moving. Recording the page
 through the operating system, or restoring the button from the history, is the way back
 to that check if the playback path ever comes under suspicion again.
+
+## Calibrating the filter envelope
+
+A second rig, and a separate one, because the first could not answer what was asked of it.
+`benchplan.js` measures things that stand still — a cutoff, a level — and an envelope does not
+stand still. Worse, its sample is three seconds long, so every envelope in the run had to be
+fast, a fast sweep can only be followed in short windows, and a short window cannot measure a
+corner. Three runs went that way and the shape never came out of them.
+
+`envplan4.js` onwards **loops the sample**, so a note lasts as long as it is held. That one
+change is what the rest rests on: with fourteen-second notes the envelope can be slow, and a
+slow sweep is a static corner measured twenty times over rather than a moving one chased with
+noisy windows.
+
+```
+node tools/envdisk.js build tools/ENVCAL5 --plan envplan5.js
+node tools/envmidi.js tools/AkaiEnvCalibration5.mid --plan envplan5.js
+```
+
+Write the `.hfe` to a Gotek, select `ENVCAL`, record the output and play the MIDI file. Then:
+
+```
+node tools/envcal.js take.wav tools/ENVCAL5.img --plan envplan5.js
+```
+
+### Measuring the measurement first
+
+Every run is rendered through the emulation before it is recorded, and the render is analysed
+by the same code:
+
+```
+node tools/envrender.js rendered.wav tools/ENVCAL5.img --plan envplan5.js
+node tools/envcal.js   rendered.wav tools/ENVCAL5.img --plan envplan5.js
+```
+
+The answers there are known exactly, so whatever the analysis reports that the model does not
+do is the analysis being wrong. That is not a formality — it caught four faults that would
+every one of them have been blamed on the sampler:
+
+- the splitter reports a note about 1.4 s after it starts, and the onset search only looked a
+  second either side, so its whole window sat *inside* the note with no silence to measure
+  against. Everything was read 2.36 s late, and two attacks came back as identical flat lines
+  because both were over before the trace began;
+- twenty-two frequency bands under 150 Hz cannot be averaged over a quarter of a second, so
+  the levelling carried more scatter than the 3 dB it was looking for;
+- three seconds of noise is flat *on average* and emphatically not flat in any given quarter
+  second — and because the sample loops, the same unlucky stretch misreads identically every
+  three seconds. Dividing by the source at the matching loop position took a corner that read
+  168–2356 Hz down to 2291–2303;
+- one section set its sustain to 0 and so tested nothing at all: the amount scales the
+  envelope's output, and an envelope resting at zero gives zero however large the amount.
+
+The bias that remains is measured rather than argued away. `envfit.js` reads the render's
+results and the hardware's together, subtracts what the analysis does to a known answer, and
+prints the table — so a constant reaches the engines by arithmetic rather than by being read
+off a printout and retyped.
+
+### What it settled
+
+The envelope time curve, at nine settings, where the model had one measured point and an
+assumed 10000:1 span across the whole range. The real span is nearer 1000:1. Attack, decay and
+release are three separate readings of that one curve and agree to 1.07x where they overlap,
+and the VCA decay confirms it independently from the same take.
+
+That the **release is a rate, not a duration** — the byte sets how fast the envelope falls, so
+a release from half depth is over in half the time. Nothing had caught it because every
+release ever measured started from a sustain of 99 and fell the whole depth, which is the one
+case where the two rules predict the same thing.
+
+That the **VCA attack is a counter**: 5.4/n seconds for whole n, at all thirteen settings, to
+within 0.7%. Which is why stored 70 and 75 return identical attacks to four digits, and why
+the attack stops getting slower at 2.70 s.
 
 ## Calibrating the LFO
 
