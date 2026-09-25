@@ -2058,8 +2058,34 @@
     return v === '' ? -1 : parseInt(v, 10);          // -1 is omni
   }
 
-  /** The keygroup covering a note in the selected program, with its sample. */
-  function voiceFor(note) {
+  /*
+   * The sample a keygroup answers a strike with, and the zone it came from.
+   *
+   * The velocity switch decides, exactly as it does in the plugin and in the desktop engine -
+   * see Akai.zoneForVelocity. This page used to ignore it entirely: it played zone 1 and
+   * reached for zone 2 only when zone 1's sample was missing from the disk, so a two-zone
+   * programme never sounded its hard sample however hard you played, and the two velocity
+   * halves of every such keygroup were the same sound.
+   *
+   * The missing-sample fallback stays, because a keygroup naming a sample that is not on the
+   * disk is better heard through its other zone than not at all - but it is a fallback now
+   * rather than the whole rule.
+   */
+  function zoneSample(disk, kg, velocity) {
+    var wanted = Akai.zoneForVelocity(kg, velocity);
+    var s = findSample(disk, wanted.name);
+    if (s) return { zone: wanted, sample: s };
+
+    var other = wanted === kg.zone1 ? kg.zone2 : kg.zone1;
+    if (other && other.inUse) {
+      s = findSample(disk, other.name);
+      if (s) return { zone: other, sample: s };
+    }
+    return null;
+  }
+
+  /** The keygroup covering a note in the selected program, with the sample that velocity picks. */
+  function voiceFor(note, velocity) {
     if (!sel || !sel.entry || sel.entry.type !== 'P') return null;
 
     var kgs = keygroupsOf(sel.disk, sel.entry);
@@ -2067,10 +2093,8 @@
       var kg = kgs[i];
       if (note < Math.min(kg.lowKey, kg.highKey) || note > Math.max(kg.lowKey, kg.highKey)) continue;
 
-      var zone = kg.zone1;
-      var s = findSample(sel.disk, kg.zone1.name);
-      if (!s && kg.zone2.inUse) { zone = kg.zone2; s = findSample(sel.disk, kg.zone2.name); }
-      if (s) return { kg: kg, zone: zone, sample: s, index: i };
+      var picked = zoneSample(sel.disk, kg, velocity);
+      if (picked) return { kg: kg, zone: picked.zone, sample: picked.sample, index: i };
     }
     return null;
   }
@@ -2093,7 +2117,7 @@
       return;
     }
 
-    var v = voiceFor(note);
+    var v = voiceFor(note, velocity);
     if (!v) {
       say('MIDI ' + name + ' arrived, but no keygroup in ' + sel.entry.name.trim() +
           ' covers it. ' + keyRangeOf(sel.entry));
@@ -2537,14 +2561,18 @@
     pickKeygroup(grp);
 
     var kgs = sel.disk.keygroups(sel.entry);
-    var kg = kgs[grp], zone = kg.zone1;
-    var s = findSample(sel.disk, kg.zone1.name);
-    if (!s && kg.zone2.inUse) { zone = kg.zone2; s = findSample(sel.disk, kg.zone2.name); }
-    if (!s) { say('Keygroup ' + (grp + 1) + "'s sample is not on this disk."); return; }
+    var kg = kgs[grp];
+
+    // The strip beside the keyboard decides which zone answers, the same as a MIDI note would
+    var velocity = strikeVelocity();
+    var picked = zoneSample(sel.disk, kg, velocity);
+    if (!picked) { say('Keygroup ' + (grp + 1) + "'s sample is not on this disk."); return; }
+
+    var zone = picked.zone, s = picked.sample;
 
     var shift = pitchFor(s, kg, zone, note);
     play(sel.disk, s, shift, $('useLoop').checked,
-         { kg: kg, zone: zone, note: note, velocity: strikeVelocity() });
+         { kg: kg, zone: zone, note: note, velocity: velocity });
     say('Playing ' + s.name + ' at ' + Akai.noteName(note) + '  -  ' +
         (shift >= 0 ? '+' : '') + shift.toFixed(2) + ' semitones' +
         (kg.constantPitch ? '  (constant pitch)' : ''));

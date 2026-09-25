@@ -723,6 +723,31 @@ var Akai = (function () {
     };
   }
 
+  /*
+   * Which of a keygroup's two samples a strike of this velocity reaches.
+   *
+   * The zones are ALTERNATIVES, not layers: the switch splits the velocity range and exactly
+   * one of them answers any given strike. Zone 1 takes everything below the switch, zone 2
+   * from the switch upwards, and a switch of 128 means there is no second zone at all - which
+   * is what the panel shows and what the keygroup editor on this page already says under the
+   * Zone 2 heading.
+   *
+   * Here rather than in the page because it is a fact about the format, the plugin and the
+   * desktop engine both have exactly this rule, and a rule three implementations are supposed
+   * to share is worth being able to test on its own.
+   *
+   * Byte 2 is read as MIDI velocity, and the boundary is inclusive at the bottom of zone 2.
+   * Both of those are assumptions rather than measurements: nothing has yet played a real
+   * S950 either side of a switch point to see which velocity first reaches the hard sample.
+   */
+  function zoneForVelocity(kg, velocity) {
+    var split = kg.velocitySwitch;
+    if (!(split >= 1 && split <= 128)) split = 128;
+
+    if (!kg.zone2 || !kg.zone2.inUse) return kg.zone1;
+    return velocity >= split ? kg.zone2 : kg.zone1;
+  }
+
   Disk.prototype.keygroups = function (p) {
     var out = [], n = this.keygroupCount(p);
     if (n === 0) return out;
@@ -2644,6 +2669,7 @@ var Akai = (function () {
     normaliseName: normaliseName,
     blocksFor: blocksFor,
     noteName: noteName,
+    zoneForVelocity: zoneForVelocity,
     BLOCK: BLOCK,
     HEADER: HEADER,
     MAX_KEYGROUPS: MAX_KEYGROUPS
