@@ -267,14 +267,43 @@ function onsetNear(when) {
   return null;
 }
 
+/*
+ * Each clip keeps its OWN onset, and the median is only the fallback.
+ *
+ * One offset for the whole take was right while every run played notes of the same shape:
+ * whatever the detector was doing, it did it equally everywhere, and the median smoothed out
+ * the scatter. Run 7 mixes an instant strike with a 1.4-second ramp, and those are not found
+ * at the same moment - the splitter puts the ramped ones 1.20 s after the plan and the
+ * instant ones 0.32 s after it. A single median then sits between the two and is wrong for
+ * both, by nearly a second on clips whose whole measurement is worth 1.4.
+ *
+ * It matters most for a release, where the trace is timed from the key coming UP: that is the
+ * note's own start plus its hold, so an onset out by a second reads a second of the wrong
+ * thing. An attack shrugs it off, because the ramp is fitted with its start as a free
+ * parameter and finds it whatever the window did.
+ */
 var offsets = [];
+var startedEach = [];
+
 wanted.forEach(function (c, i) {
+  startedEach[i] = null;
   if (slot[i] < 0) return;
+
   var on = onsetNear(c.from + placed.offset);
-  if (on !== null) offsets.push(on - c.from);
+  if (on === null) return;
+
+  offsets.push(on - c.from);
+  startedEach[i] = on - c.from;
 });
+
 offsets.sort(function (a, b) { return a - b; });
 var startedAt = offsets.length ? offsets[Math.floor(offsets.length / 2)] : placed.offset;
+
+/// Where clip `i` really began, from the audio where that could be read and the take's own
+/// median where it could not.
+function startOf(i) {
+  return startedEach[i] === null ? startedAt : startedEach[i];
+}
 
 console.log('');
 console.log('take: ' + (w.samples.length / w.rate).toFixed(1) + 's at ' + w.rate + ' Hz, ' +
@@ -488,7 +517,7 @@ function rms(x) {
 /** A stretch of a note, in seconds from when it began. */
 function during(i, fromSeconds, toSeconds) {
   if (slot[i] < 0) return null;
-  var begins = wanted[i].from + startedAt;
+  var begins = wanted[i].from + startOf(i);
   var a = Math.max(0, Math.round((begins + fromSeconds) * w.rate));
   var b = Math.min(w.samples.length, Math.round((begins + toSeconds) * w.rate));
   return b > a ? w.samples.subarray(a, b) : null;
@@ -1418,10 +1447,22 @@ if (sections.level && sections.level.at.length) {
      * thing here may be under a tenth. At a quarter second an attack of 30 would have been
      * two points and an answer to one significant figure.
      */
+    /*
+     * A release clip is watched from the key coming UP, everything else from the strike.
+     *
+     * The amplitude release is the one stage that happens after the note is let go, so a
+     * trace that stops at the hold - which is all this ever did - cannot see it at all. The
+     * falling branch below is already the right measurement for it; it only had to be
+     * pointed at the right stretch of audio.
+     */
+    var fromKeyUp = /^release/.test(c.section);
+    var begins = fromKeyUp ? c.hold : 0.0;
+    var until  = fromKeyUp ? plan.TIMING.gap * 0.9 : c.hold - 0.2;
+
     function traceAt(win) {
       var out = [], hop = win / 2;
-      for (var t = 0; t + win < c.hold - 0.2; t += hop) {
-        var audio = during(i, t, t + win);
+      for (var t = 0; t + win < until; t += hop) {
+        var audio = during(i, begins + t, begins + t + win);
         if (audio === null) break;
         out.push({ t: t + win / 2, db: 20 * Math.log10(Math.max(rms (audio), 1e-9)) });
       }
@@ -1464,6 +1505,20 @@ if (sections.level && sections.level.at.length) {
       console.log('      ' + p.t.toFixed(2).padStart(6) + 's  ' +
                   (p.db - peak).toFixed(1).padStart(7) + ' dB');
     });
+
+    /*
+     * A falling trace starts at its loudest, by definition - so that is the reference.
+     *
+     * Taking the maximum over the whole window instead let the NEXT note redefine it. A
+     * release watched for 1.8 s in a 2 s gap caught the following strike in its last frames,
+     * which is 20 dB above anything in the release, and every reading was then measured
+     * against the wrong zero: the same release read 22 usable points in one clip and 5 in
+     * the next, purely by whether the neighbour bled in.
+     *
+     * The gap has since been widened so it should not happen at all, and this makes it
+     * harmless if it ever does.
+     */
+    if (!c.rising && trace.length) peak = trace[0].db;
 
     var floorDb = Math.min.apply(null, trace.map(function (p) { return p.db; }));
     console.log('      it moves ' + (peak - floorDb).toFixed(1) + ' dB');
