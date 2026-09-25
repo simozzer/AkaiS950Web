@@ -119,6 +119,7 @@ function sweep(spec) {
     TESTS.push({
       section: spec.section, analysis: 'level', label: spec.label + ' at velocity ' + velocity,
       key: key, velocity: velocity, hold: spec.hold || TIMING.hold,
+      gapAfter: spec.gapAfter || TIMING.gap,
       setting: velocity, rising: spec.rising === true, watch: 'level', why: spec.why
     });
   });
@@ -185,7 +186,25 @@ sweep({
   sweep({
     section: 'release ' + (depth > 0 ? '+' : '') + depth,
     label: 'vel->release ' + depth,
-    velocities: [1, 127], hold: 3.0,
+    velocities: [1, 127],
+
+    /*
+     * THE SAME LENGTH AS EVERY OTHER NOTE, AND A LONG PAUSE AFTER IT.
+     *
+     * These were three seconds, and the first take of this run came back with all six of
+     * them sounding for fourteen - flat at full level, then stopping dead, which is a note
+     * still held rather than a tail. Whatever did that, a plan that asks for one note length
+     * in one section and a different one everywhere else is a plan with a way to go wrong
+     * that a uniform one does not have. So they are fourteen seconds like the rest: if the
+     * lengths are honoured this measures exactly what it did before, and if something is
+     * imposing a single length on every note then it is already the length we asked for.
+     *
+     * The pause is the other half. At eleven seconds apart with fourteen seconds of sound,
+     * consecutive release clips ran into each other and the analysis saw three notes where
+     * six were played. Twenty seconds outlasts a release several times longer than the model
+     * thinks this one is, which is the only honest amount to allow for something unmeasured.
+     */
+    hold: 14.0, gapAfter: 20.0,
     set: { 3: 0, 6: RELEASE_BASE, 10: depth & 0xFF },
     why: 'what the sign of a signed depth means, at the value the library chose'
   });
@@ -197,10 +216,21 @@ function schedule() {
   var at = TIMING.lead;
   var section = null;
 
+  /*
+   * The gap belongs to the clip BEFORE it, not to the run.
+   *
+   * A release needs a long pause after it and an attack does not, and one global gap made
+   * every note pay for the slowest. More than that, it is the previous note's tail that has
+   * to fit in the gap, so the previous note is what should decide how long it is.
+   */
+  var previous = null;
+
   TESTS.forEach(function (c) {
     var first = c.section !== section;
-    if (clips.length) at += first ? TIMING.sectionGap : TIMING.gap;
+    if (clips.length)
+      at += first ? Math.max(TIMING.sectionGap, previous.gapAfter) : previous.gapAfter;
     section = c.section;
+    previous = c;
 
     events.push({ at: at, kind: 'on', note: c.key, velocity: c.velocity });
     events.push({ at: at + c.hold, kind: 'off', note: c.key });
