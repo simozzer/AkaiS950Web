@@ -84,6 +84,43 @@ function noise(count) {
   return words;
 }
 
+/*
+ * A pure tone, for a run that needs two samples telling apart rather than one measured.
+ *
+ * Noise is the right source for a filter measurement - something at every frequency to take
+ * away - and exactly the wrong one for "which of these two samples am I hearing", because two
+ * pieces of noise sound alike. A sine against noise is the easiest pair there is: one has all
+ * its energy in a single bin and the other has none to speak of in any.
+ *
+ * Whole cycles in the buffer, so a looping sample joins to itself without a click that would
+ * put a spray of harmonics into the very measurement it is there to make clean.
+ */
+function tone(count, hz, rate) {
+  var cycles = Math.max(1, Math.round(count * hz / rate));
+  var words = new Int16Array(count);
+
+  for (var i = 0; i < count; i++)
+    words[i] = Math.round(Math.sin(2 * Math.PI * cycles * i / count) * PEAK);
+
+  return words;
+}
+
+/*
+ * What a plan wants on its disk.
+ *
+ * Most runs want the one noise sample and say nothing, which is what SAMPLES defaulting to
+ * that gives them. A run that needs to tell two samples apart names both and says what each
+ * should be.
+ */
+function samplesFor(plan) {
+  if (plan.SAMPLES && plan.SAMPLES.length) return plan.SAMPLES;
+  return [{ name: SAMPLE, kind: 'noise' }];
+}
+
+function wordsFor(spec, count) {
+  return spec.kind === 'tone' ? tone(count, spec.hz || 1000, RATE) : noise(count);
+}
+
 function findProgram(disk) {
   var found = null;
   disk.programsInOrder().forEach(function (p) {
@@ -103,11 +140,12 @@ function buildDisk(name, log) {
   var say = log || function () {};
   var disk = Akai.blank((name || PROGRAM) + '.img');
   var kgs = plan.keygroups();
-  var words = noise(Math.round(SECONDS * RATE));
+  var specs = samplesFor(plan);
+  var count = Math.round(SECONDS * RATE);
 
   say('');
-  say('building ' + PROGRAM + ': ' + words.length + ' words of noise at ' + RATE +
-      ' Hz, ' + kgs.length + ' keygroups');
+  say('building ' + PROGRAM + ': ' + specs.length + ' sample(s) of ' + count +
+      ' words at ' + RATE + ' Hz, ' + kgs.length + ' keygroups');
 
   /*
    * Looped when the plan asks, one-shot otherwise.
@@ -117,18 +155,24 @@ function buildDisk(name, log) {
    * runs. Looping costs nothing - the same noise, with its loop points set - and lets a note
    * last as long as the key is held, so the envelope can be slow enough to read properly.
    */
-  disk.addSample(SAMPLE, words, RATE, 60, 0, plan.LOOPING ? 'L' : 'O');
+  specs.forEach(function (spec) {
+    var words = wordsFor(spec, count);
+    disk.addSample(spec.name, words, RATE, 60, 0, plan.LOOPING ? 'L' : 'O');
+    say('  ' + spec.name + ': ' + (spec.kind === 'tone'
+          ? (spec.hz || 1000) + ' Hz tone' : 'white noise from a fixed seed'));
 
-  if (plan.LOOPING) {
-    // the whole sample is the loop: the machine plays end-length..end, so an end of n and a
-    // length of n is every word of it, round and round
-    var e = null;
-    disk.entries.forEach(function (x) {
-      if (x.type === 'S' && x.name.trim().toUpperCase() === SAMPLE) e = x;
-    });
-    if (e) disk.setLoop(e, words.length, words.length, 'L');
-    say('  looped, so a note lasts as long as it is held');
-  }
+    if (plan.LOOPING) {
+      // the whole sample is the loop: the machine plays end-length..end, so an end of n and
+      // a length of n is every word of it, round and round
+      var e = null;
+      disk.entries.forEach(function (x) {
+        if (x.type === 'S' && x.name.trim().toUpperCase() === spec.name.toUpperCase()) e = x;
+      });
+      if (e) disk.setLoop(e, words.length, words.length, 'L');
+    }
+  });
+
+  if (plan.LOOPING) say('  looped, so a note lasts as long as it is held');
 
   disk.addProgram(PROGRAM);
   var prog = findProgram(disk);
@@ -144,6 +188,11 @@ function buildDisk(name, log) {
       disk.setKeygroupByte(prog, i, parseInt(k, 10), want[k]);
     });
     disk.setZoneSample(prog, i, 0, spec.sample);
+
+    // A second zone, for a run measuring which of the two a strike reaches. Everything
+    // before run 6 names one sample and leaves zone 2 as the panel left it.
+    if (spec.sample2) disk.setZoneSample(prog, i, 1, spec.sample2);
+
     prog = findProgram(disk);
   });
 
@@ -179,9 +228,14 @@ function check() {
   console.log('');
   console.log(file + '  -  ' + disk.entries.length + ' files');
 
-  if (!disk.entries.some(function (e) {
-        return e.type === 'S' && e.name.trim().toUpperCase() === SAMPLE; })) {
-    console.log('  FAIL: no ' + SAMPLE + ' sample. Every measurement divides by it.');
+  var missing = samplesFor(plan).filter(function (s) {
+    return !disk.entries.some(function (e) {
+      return e.type === 'S' && e.name.trim().toUpperCase() === s.name.toUpperCase(); });
+  });
+
+  if (missing.length) {
+    console.log('  FAIL: no ' + missing.map(function (s) { return s.name; }).join(', ') +
+                ' sample. Every measurement divides by it.');
     process.exit(1);
   }
 
@@ -210,7 +264,25 @@ function check() {
     });
 
     var zone = live[i] && live[i].zone1 ? live[i].zone1.name.trim().toUpperCase() : '';
-    if (zone !== SAMPLE) says.push('zone 1 plays "' + zone + '", not ' + SAMPLE);
+    if (zone !== spec.sample.toUpperCase())
+      says.push('zone 1 plays "' + zone + '", not ' + spec.sample);
+
+    /*
+     * A second zone that did not take is the whole of run 6 measuring nothing.
+     *
+     * It has to be there AND the keygroup has to agree it is in use - a name alone is not
+     * enough, since the panel leaves "2 SAMPLE" and a null pointer in a zone it is not
+     * using, and the engines read those as no second zone at all.
+     */
+    if (spec.sample2) {
+      var z2 = live[i] && live[i].zone2;
+      var got2 = z2 ? z2.name.trim().toUpperCase() : '';
+
+      if (got2 !== spec.sample2.toUpperCase())
+        says.push('zone 2 plays "' + got2 + '", not ' + spec.sample2);
+      else if (!z2.inUse)
+        says.push('zone 2 names ' + spec.sample2 + ' but does not read as in use');
+    }
 
     if (says.length) {
       bad += says.length;

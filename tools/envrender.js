@@ -36,12 +36,27 @@ if (!prog) { console.log('no ENVCAL programme in ' + image); process.exit(1); }
 
 var kgs = disk.keygroups(prog);
 
-var smp = null;
-disk.entries.forEach(function (e) { if (e.type === 'S' && e.name.trim() === 'NOISE') smp = e; });
-if (!smp) { console.log('no NOISE sample in ' + image); process.exit(1); }
+/*
+ * The samples on the disk, by name.
+ *
+ * This used to find the one called NOISE and play it for every note, which is right for a run
+ * carrying a single sample and wrong for one whose whole question is WHICH sample sounded.
+ */
+function sampleNamed (name) {
+  var found = null;
+  disk.entries.forEach(function (e) {
+    if (e.type === 'S' && e.name.trim().toUpperCase() === String (name).trim().toUpperCase())
+      found = e;
+  });
+  return found;
+}
+
+var smp = sampleNamed ('NOISE');
+if (!smp) disk.entries.forEach(function (e) { if (!smp && e.type === 'S') smp = e; });
+if (!smp) { console.log('no sample at all in ' + image); process.exit(1); }
 
 var RATE = smp.sampleRate;
-var words = disk.sampleWords12(smp);
+// the note picks its own sample now - see renderNote
 
 function keygroupFor(note) {
   for (var i = 0; i < kgs.length; i++) {
@@ -64,7 +79,19 @@ function renderNote(clip, seconds) {
   var kg = keygroupFor(clip.note);
   if (!kg) return new Float32Array(n);
 
-  var zone = kg.zone1;
+  /*
+   * The velocity switch decides which sample, exactly as the engines do.
+   *
+   * This took zone 1 always, which was harmless while every run had one sample on the disk
+   * and nothing in zone 2 - and useless the moment a run measures the switch itself, since
+   * the render would have answered every velocity with the soft sample and "proved" a
+   * boundary that was really just the renderer.
+   */
+  var zone = Akai.zoneForVelocity (kg, clip.velocity);
+
+  // and the sample that zone names, not whichever one the disk happened to list first
+  var entry = sampleNamed (zone.name) || smp;
+  var words = disk.sampleWords12 (entry);
   var env = Audio.vcfEnvelope(kg, zone, clip.note, clip.velocity, RATE);
   var closing = env.withRelease(clip.hold);
 
@@ -80,7 +107,7 @@ function renderNote(clip, seconds) {
    * what the plan looping is meant to escape.
    */
   var source = words;
-  if (smp.loopMode !== 'O' && n > words.length) {
+  if (entry.loopMode !== 'O' && n > words.length) {
     source = new Int16Array(n);
     for (var k = 0; k < n; k++) source[k] = words[k % words.length];
   }

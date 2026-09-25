@@ -54,9 +54,35 @@ if (!file) {
 // ---------------------------------------------------------------- the source
 
 var disk = Akai.load('x', new Uint8Array(fs.readFileSync(image)));
-var smp = null;
-disk.entries.forEach(function (e) { if (e.type === 'S' && e.name.trim() === 'NOISE') smp = e; });
-if (!smp) { console.log('no NOISE sample in ' + image); process.exit(1); }
+
+/*
+ * The sample every measurement divides by.
+ *
+ * It was always called NOISE, and insisting on that name was right while every run put one
+ * piece of white noise on the disk. Run 6 needs two samples that can be told apart, so it
+ * carries a SOFT sine and a HARD noise and there is no NOISE at all - and this refused to
+ * open the disk rather than saying so.
+ *
+ * Whichever noise the plan declares will do: the divisor only has to be something with
+ * energy at every frequency, and the corner measurements are the only things that use it.
+ * A run that measures which sample sounded does not divide by anything.
+ */
+function sampleNamed(want) {
+  var found = null;
+  disk.entries.forEach(function (e) {
+    if (e.type === 'S' && e.name.trim().toUpperCase() === want.toUpperCase()) found = e;
+  });
+  return found;
+}
+
+var smp = sampleNamed('NOISE');
+
+if (!smp && plan.SAMPLES)
+  plan.SAMPLES.forEach(function (s) { if (!smp && s.kind !== 'tone') smp = sampleNamed(s.name); });
+
+if (!smp) disk.entries.forEach(function (e) { if (!smp && e.type === 'S') smp = e; });
+
+if (!smp) { console.log('no sample at all in ' + image); process.exit(1); }
 
 var words = disk.sampleWords12(smp);
 var source = new Float64Array(words.length);
@@ -205,10 +231,23 @@ function onsetNear(when) {
    * The gap is silent by construction and no note reaches across it, so looking back most of
    * one guarantees the window contains the silence this needs.
    */
-  var back = Math.max(1.0, plan.TIMING.gap * 0.8);
+  /*
+   * And not so far FORWARD that the window reaches the next note.
+   *
+   * The look-ahead was a flat second, which is right when notes are fourteen seconds apart
+   * and wrong when they are one: run 6 puts 0.6 s notes in 0.6 s gaps, so a second of
+   * look-ahead from one note's position lands inside the next. The take aligned 0.94 s early
+   * - a whole note out - because the search kept finding the following onset.
+   *
+   * Only the FORWARD side is bounded. Looking back has to stay generous, because that is the
+   * fix described above for the splitter reporting a note well after it started - capping it
+   * at a second as well undid it, and run 5 went from placing 21 clips of 21 to placing 20.
+   */
+  var back  = Math.max(0.15, plan.TIMING.gap * 0.8);
+  var ahead = Math.min(1.0, Math.max(0.15, (plan.TIMING.hold || 1.0) * 0.8));
   var frame = Math.max(64, Math.round(w.rate * 0.01));
   var from = Math.max(0, Math.round((when - back) * w.rate));
-  var to = Math.min(w.samples.length, Math.round((when + 1.0) * w.rate));
+  var to = Math.min(w.samples.length, Math.round((when + ahead) * w.rate));
 
   var levels = [];
   for (var at = from; at + frame <= to; at += frame) {
@@ -1180,6 +1219,131 @@ if (sections.trajectory && sections.trajectory.at.length) {
  * The settled corner where the envelope has finished, for the clips asking where the bottom
  * of the filter's travel really is.
  */
+/*
+ * WHICH SAMPLE ANSWERED - the velocity switch, measured.
+ *
+ * The keygroup holds a sine in zone 1 and noise in zone 2, so "which one is this" is answered
+ * by how much of the clip's energy sits at the tone's own frequency. Nearly all of it, and it
+ * is the sine; almost none, and it is the noise.
+ *
+ * Against the two samples themselves rather than against a threshold. Both are on the disk,
+ * so the analysis reads each one, measures it the same way, and asks which of those two
+ * numbers a clip is nearer in the log. That needs no constant anyone has to justify, and it
+ * cannot drift if the recording chain rolls off or the levels differ.
+ *
+ * A CROSSFADE WOULD SHOW AS A MIDDLE READING
+ *
+ * If the machine blends the two zones over a few velocities rather than switching between
+ * them, a clip in the blend is part sine and part noise and lands between the two references
+ * instead of on one. That is reported rather than rounded to the nearer, because "there is a
+ * blend here" is the more interesting of the two answers this run can give.
+ */
+if (sections.zone && sections.zone.at.length) {
+  console.log('');
+  console.log('THE VELOCITY SWITCH  -  which sample a strike reaches');
+
+  var toneHz = plan.TONE_HZ || 1000;
+
+  /// How much of a stretch of audio sits at the tone's frequency, against all of it.
+  function toneShare(x) {
+    if (!x || x.length < 512) return 0;
+
+    // `win`, not `w` - the take is called w, and a Hann window shadowing it turns every
+    // angle below into NaN without a word of complaint.
+    var re = 0, im = 0, total = 0;
+    for (var i = 0; i < x.length; i++) {
+      var win = 0.5 - 0.5 * Math.cos(2 * Math.PI * i / (x.length - 1));
+      var s = x[i] * win;
+      var a = 2 * Math.PI * toneHz * i / w.rate;
+      re += s * Math.cos(a);
+      im += s * Math.sin(a);
+      total += s * s;
+    }
+
+    var at = 2 * (re * re + im * im) / (x.length * x.length);
+    return total > 0 ? at / (total / x.length) : 0;
+  }
+
+  // the two samples as they are on the disk, measured the same way
+  function shareOfSample (name) {
+    var e = sampleNamed (name);
+    if (!e) return null;
+    var ws = disk.sampleWords12 (e);
+    var buf = new Float64Array (Math.min (ws.length, Math.round (0.4 * w.rate)));
+    for (var i = 0; i < buf.length; i++) buf[i] = ws[i] / 2048;
+    return toneShare (buf);
+  }
+
+  var refSoft = shareOfSample ((plan.SAMPLES && plan.SAMPLES[0].name) || 'SOFT');
+  var refHard = shareOfSample ((plan.SAMPLES && plan.SAMPLES[1].name) || 'HARD');
+
+  if (refSoft === null || refHard === null || !(refSoft > refHard)) {
+    console.log('   cannot read the two samples off the disk to compare against');
+  }
+  else {
+    console.log('   the samples themselves read ' + refSoft.toFixed(3) +
+                ' (zone 1) and ' + refHard.toFixed(4) + ' (zone 2)');
+
+    var bySection = {};
+    sections.zone.at.forEach(function (i) {
+      var c = wanted[i];
+      (bySection[c.section] || (bySection[c.section] = [])).push(i);
+    });
+
+    result.zone = [];
+
+    Object.keys(bySection).forEach(function (name) {
+      console.log('');
+      console.log('   ' + name);
+
+      var last = null, boundary = null, blended = 0;
+
+      bySection[name].forEach(function (i) {
+        var c = wanted[i];
+
+        // past the attack, before the key comes up - the steadiest part of a short note
+        var audio = during(i, 0.1, c.hold - 0.1);
+        if (audio === null) { console.log('      v' + c.velocity + '  no audio'); return; }
+
+        var share = toneShare(audio);
+
+        /*
+         * Where it falls between the two, in the log, as 0 for the sine and 1 for the noise.
+         * Anything between a tenth and nine tenths is neither sample on its own.
+         */
+        var t = (Math.log(share) - Math.log(refSoft)) /
+                (Math.log(refHard) - Math.log(refSoft));
+        var which = t < 0.1 ? 'zone 1' : t > 0.9 ? 'zone 2' : 'BLENDED';
+        if (which === 'BLENDED') blended++;
+
+        if (last !== null && last !== which && which === 'zone 2' && boundary === null)
+          boundary = c.velocity;
+        last = which;
+
+        console.log('      velocity ' + String(c.velocity).padStart(3) + '   ' +
+                    share.toFixed(4).padStart(8) + '   ' + which +
+                    (which === 'BLENDED' ? '  (' + Math.round(t * 100) + '% of the way over)' : ''));
+
+        result.zone.push({ section: name, velocity: c.velocity, share: share,
+                           towards: t, which: which });
+      });
+
+      var says = wanted[bySection[name][0]].velocitySwitch;
+
+      if (blended)
+        console.log('      ' + blended + ' clip(s) between the two samples - this is a ' +
+                    'CROSSFADE, not a switch');
+      else if (boundary === null)
+        console.log('      no handover seen in this sweep');
+      else
+        console.log('      zone 2 first answers at velocity ' + boundary +
+                    ', and the byte says ' + says +
+                    (boundary === says ? '  - the model is right'
+                                       : '  - the model is out by ' + (boundary - says)));
+    });
+  }
+}
+
 if (sections.settled && sections.settled.at.length) {
   console.log('');
   console.log('THE FLOOR  -  how far down the cutoff will actually go');
