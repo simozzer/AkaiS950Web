@@ -77,7 +77,19 @@ var ATTACK_BASE = 70;
 var RELEASE_BASE = 70;
 
 /*
- * LONGER THAN THEY LOOK, AND THE GAP IS THE PART THAT MATTERS
+ * FIVE SECONDS IS ENOUGH FOR A NOTE, BECAUSE THE ATTACK HAS A CEILING
+ *
+ * These were fourteen seconds, guarding against an attack that a harder strike might have
+ * lengthened towards stored 99 - 10.7 s by the envelope curve. That guard was against
+ * something the hardware cannot do. Run 5 established that the VCA attack is a counter,
+ * 5.4/n seconds for whole n, and that n bottoms out at 2: the slowest attack this machine has
+ * is 2.70 s, whatever the byte says and whatever velocity does to it. Velocity can only pick
+ * among the counter's rates.
+ *
+ * So five seconds is nearly twice the longest attack that can exist, with the rest of the
+ * note left over as the plateau the rise is measured against. That halves the run.
+ *
+ * THE GAP IS THE PART THAT MATTERS
  *
  * Run 6 could be tight because it asked which sample sounded, which a fraction of a second
  * answers. This one times two envelope stages, and both can run away from their base setting
@@ -97,9 +109,9 @@ var RELEASE_BASE = 70;
  * and a ramp still climbing when the note ends reads as whatever fraction of it was visible.
  */
 var TIMING = {
-  hold: 14.0,
-  gap: 8.0,
-  sectionGap: 10.0,
+  hold: 5.0,
+  gap: 3.0,           // an attack clip releases at 0, so its note stops dead
+  sectionGap: 5.0,
   lead: 1.0,
   channel: 0
 };
@@ -204,7 +216,7 @@ sweep({
      * six were played. Twenty seconds outlasts a release several times longer than the model
      * thinks this one is, which is the only honest amount to allow for something unmeasured.
      */
-    hold: 14.0, gapAfter: 20.0,
+    hold: TIMING.hold, gapAfter: 20.0,
     set: { 3: 0, 6: RELEASE_BASE, 10: depth & 0xFF },
     why: 'what the sign of a signed depth means, at the value the library chose'
   });
