@@ -804,6 +804,22 @@ var Akai = (function () {
         constantPitch: (raw[18] & 0x01) !== 0,
         lfoDesync: (raw[18] & 0x04) !== 0,
         oneShot: (raw[18] & 0x08) !== 0,
+
+        /*
+         * Bit 0x10 is the ON/OFF beside Release on the panel's velocity page.
+         *
+         * Found by flipping it on the machine and diffing the saved disk against the one
+         * that had been written to the Gotek - tools/kgdiff.js. Of the whole file only this
+         * one bit moved, in the one keygroup it was changed on; twelve pointers also shifted,
+         * every one of them by exactly 376 bytes, which is the programme being reloaded to a
+         * different address rather than anything anyone touched.
+         *
+         * So WHERE it lives is now certain and WHAT IT DOES is not. The panel puts it beside
+         * velocity-to-release, which suggests it gates that, but byte 10 already carries a
+         * depth and a depth of zero already means no effect - so a separate switch for the
+         * same thing would be odd. Until a run measures it, nothing reads this.
+         */
+        velocityReleaseSwitch: (raw[18] & 0x10) !== 0,
         nextKeygroup: u16(raw, 68),
         zone1: parseZone(raw, KG_NAME),
         zone2: parseZone(raw, KG_NAME + KG_ZONE_STRIDE),

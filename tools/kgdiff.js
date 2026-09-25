@@ -72,9 +72,17 @@ function keygroupMap() {
   return m;
 }
 
-/// The program header's own 38 bytes, as far as anyone has worked them out.
+/*
+ * The program header's own 38 bytes, as far as anyone has worked them out.
+ *
+ * Bytes 18 and 19 were identified by this tool on its first real use: they moved by exactly
+ * the same amount as every zone and next-keygroup pointer in the file when the sampler
+ * rewrote it - 376 bytes down, twelve fields, one delta - so they are an address of the same
+ * kind and not a setting.
+ */
 var HEADER_MAP = {
   0: 'program number', 16: 'key->loudness', 17: 'key->loudness',
+  18: 'program pointer', 19: 'program pointer',
   21: 'positional crossfade', 22: 'format marker (S900/S950)'
 };
 
@@ -122,6 +130,57 @@ Object.keys(names).forEach(function (name) {
   var ra = a.readFile(pa), rb = b.readFile(pb);
   var said = false;
 
+  /*
+   * Every pointer in the file moves when the sampler reloads the programme somewhere else,
+   * and they all move by the SAME amount - they are RAM addresses, not settings.
+   *
+   * On the first real use of this tool that was twelve fields shifting by 376 bytes apiece,
+   * and the single bit that had actually been changed on the panel was buried in the middle
+   * of them. So a uniform shift is recognised, stated once, and the bytes carrying it are
+   * left out of everything below. A pointer that does NOT match the shift stays in, because
+   * that would be a real difference rather than a relocation.
+   */
+  var pointerAt = [{ what: 'header', off: 18 }];
+  var kgCount = Math.min(a.keygroupCount(pa), b.keygroupCount(pb));
+
+  for (var pk = 0; pk < kgCount; pk++) {
+    var po = PROG_HEADER + pk * KEYGROUP;
+    pointerAt.push({ what: 'kg ' + (pk + 1) + ' zone 1', off: po + 40 },
+                   { what: 'kg ' + (pk + 1) + ' zone 2', off: po + 62 },
+                   { what: 'kg ' + (pk + 1) + ' next',   off: po + 68 });
+  }
+
+  function u16 (r, o) { return r[o] | (r[o + 1] << 8); }
+
+  var shifts = {}, shifted = 0;
+  pointerAt.forEach(function (p) {
+    if (p.off + 1 >= ra.length || p.off + 1 >= rb.length) return;
+    var d = u16 (rb, p.off) - u16 (ra, p.off);
+    if (d === 0) return;
+    shifts[d] = (shifts[d] || 0) + 1;
+    shifted++;
+  });
+
+  var keys = Object.keys (shifts);
+  var relocated = {};
+
+  if (keys.length === 1 && shifted > 1) {
+    var by = Number (keys[0]);
+    console.log('');
+    console.log('  ' + name);
+    said = true;
+    console.log('    ' + shifted + ' pointers all moved by ' + by + ' - the programme was ' +
+                'reloaded to a different address,');
+    console.log('    which is the sampler housekeeping rather than anything you changed. ' +
+                'Ignoring them.');
+
+    pointerAt.forEach(function (p) {
+      if (p.off + 1 >= ra.length || p.off + 1 >= rb.length) return;
+      if (u16 (rb, p.off) - u16 (ra, p.off) !== by) return;
+      relocated[p.off] = relocated[p.off + 1] = true;
+    });
+  }
+
   function report(where, off, was, now, what) {
     if (!said) { console.log(''); console.log('  ' + name); said = true; }
     moved++;
@@ -133,10 +192,17 @@ Object.keys(names).forEach(function (name) {
                 String(was).padStart(3) + ' -> ' + String(now).padStart(3) + '   ' +
                 (known ? what : '*** NO KNOWN MEANING ***'));
 
-    // Broken into bits whenever it could be a switch rather than a number: the flags byte
-    // always, and any other byte where a single bit moved.
+    /*
+     * Broken into bits only where a bit is what it would mean.
+     *
+     * The flags byte of a keygroup always, and any byte where exactly one bit moved. NOT a
+     * header byte, which has its own meanings - the first version ran the keygroup's flag
+     * names over header bytes 18 and 19 and confidently reported "one-shot" and "constant
+     * pitch" on what turned out to be half a pointer.
+     */
     var diff = was ^ now;
-    if (off === 18 || (diff && (diff & (diff - 1)) === 0))
+    if ((where.indexOf('kg') === 0 && off === 18) ||
+        (where.indexOf('kg') === 0 && diff && (diff & (diff - 1)) === 0))
       bitsChanged(was, now).forEach(function (line) {
         console.log('        bit ' + line);
 
@@ -146,14 +212,15 @@ Object.keys(names).forEach(function (name) {
   }
 
   for (var i = 0; i < PROG_HEADER && i < ra.length && i < rb.length; i++)
+    if (relocated[i] && ! all) continue;
     if (ra[i] !== rb[i] && (all || HEADER_MAP[i] === undefined))
       report('header ', i, ra[i], rb[i], HEADER_MAP[i]);
 
-  var count = Math.min(a.keygroupCount(pa), b.keygroupCount(pb));
-  for (var k = 0; k < count; k++) {
+  for (var k = 0; k < kgCount; k++) {
     var oa = PROG_HEADER + k * KEYGROUP;
     for (var j = 0; j < KEYGROUP; j++) {
       if (oa + j >= ra.length || oa + j >= rb.length) break;
+      if (relocated[oa + j] && ! all) continue;
       if (ra[oa + j] === rb[oa + j]) continue;
 
       /*
