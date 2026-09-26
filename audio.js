@@ -848,7 +848,29 @@ var AkaiAudio = (function () {
      * numbers: the VCA attack turned out to be 5.4/n for whole n. It is not read to that
      * precision and a better run could move it either way.
      */
-    WARP_CENTS_PER_UNIT: 6.25,
+    /*
+     * MEASURED IN RUN 22, which is the first run ever to sweep byte 13 at all.
+     *
+     * 6.25 was chosen because it is a sixteenth of a semitone exactly, and the fit behind it
+     * gave 6.21 and could not separate 6.0 from 6.5. What that fit never did was vary the
+     * DEPTH: runs 10, 11 and 12 all pinned byte 13 at -50 and swept byte 12 and velocity
+     * instead, so the depth constant came out sideways from clips aimed at something else.
+     *
+     * Ten depths, both signs, byte 12 at zero so velocity does not come into it:
+     *
+     *     depth    -50   -40   -30   -20   -10    10    20    30    40    50
+     *     cents   -325  -238  -214  -132   -72    63   122   200   242   330
+     *
+     * A line through the origin gives 6.436 cents per unit, residual rms 12 cents, standard
+     * error 0.114. So 6.0 is 3.8 standard errors away and dead; 6.25 is 1.6 away and no
+     * longer the best estimate; 6.5 is 0.6 away and would also fit.
+     *
+     * Note for the next person tempted by the limiter story: it is not the explanation here.
+     * Clipping a sine does not move its zero crossings, and the pitch is read by counting
+     * them - so runs 10 to 12 being heavily limited would barely have touched this. The
+     * reason 6.25 was soft is simply that nobody had varied the byte.
+     */
+    WARP_CENTS_PER_UNIT: 6.44,
 
     /*
      * The time constant of the bend, by byte 14. Measured, eleven points.
