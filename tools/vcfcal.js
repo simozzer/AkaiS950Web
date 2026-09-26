@@ -171,11 +171,11 @@ function splitClips(x, rate, want, opts) {
   // 12 dB above the noise floor, but never within 40 dB of the loudest clip, so that a
   // recording with no real silence in it fails to split rather than splitting wrongly.
   var threshold = Math.max(floorLevel * 4, peak * 1e-4);
-  var minClip = Math.max(1, Math.round(0.25 / 0.01));       // 250 ms of sound
 
   /** Runs of sound, ending only after `gapSeconds` of quiet. */
-  function detect(gapSeconds) {
+  function detect(gapSeconds, minClipSeconds) {
     var minGap = Math.max(1, Math.round(gapSeconds / 0.01));
+    var minClip = Math.max(1, Math.round(minClipSeconds / 0.01));
     var runs = [], start = -1, quiet = 0;
 
     for (var i = 0; i < frames; i++) {
@@ -194,21 +194,36 @@ function splitClips(x, rate, want, opts) {
     return runs;
   }
 
-  // No single threshold works for everything. Too short and a quiet clip that dips
-  // mid-note splits in two - a note at velocity 20 with velocity driving loudness
-  // dropped out for nearly half a second. Too long and a take recorded with brief gaps
-  // will not split at all. When the caller says how many clips to expect, try a spread
-  // and take the one that finds exactly that many; otherwise use the middle of the road.
-  var tries = [opts.minGapSeconds || 0.5, 0.3, 0.7, 0.2, 1.0, 0.15, 1.4];
+  /*
+   * No single pair of thresholds works for everything, so the pair is searched.
+   *
+   * THE GAP. Too short and a quiet clip that dips mid-note splits in two - a note at
+   * velocity 20 with velocity driving loudness dropped out for nearly half a second. Too
+   * long and a take recorded with brief gaps will not split at all.
+   *
+   * HOW MUCH SOUND COUNTS AS A CLIP. This was fixed at 250 ms and it threw away real
+   * measurements: an amplitude decay of stored 15 with the sustain at zero is a CLICK -
+   * 74 dB of fall at 2100 dB/s is over in 35 milliseconds - so five rungs of run 19's decay
+   * ladder were dropped as too short to be notes. They are the fastest settings on the disk,
+   * which is to say the ones the run was built to measure.
+   *
+   * 250 ms stays FIRST, because shortening it is what lets a dip split a note in two. The
+   * shorter values are only reached when the longer ones do not produce the number of clips
+   * the plan asked for, and that count is the check on whether the shortening was right.
+   */
+  var gaps = [opts.minGapSeconds || 0.5, 0.3, 0.7, 0.2, 1.0, 0.15, 1.4];
+  var lengths = [opts.minClipSeconds || 0.25, 0.1, 0.04, 0.02];
   var runs = null, closest = null, closestMiss = 1e9;
 
-  for (var t = 0; t < tries.length; t++) {
-    var got = detect(tries[t]);
-    if (want && got.length === want) { runs = got; break; }
+  for (var L = 0; L < lengths.length && !runs; L++) {
+    for (var t = 0; t < gaps.length; t++) {
+      var got = detect(gaps[t], lengths[L]);
+      if (want && got.length === want) { runs = got; break; }
 
-    var miss = want ? Math.abs(got.length - want) : 0;
-    if (miss < closestMiss) { closestMiss = miss; closest = got; }
-    if (!want) { runs = got; break; }
+      var miss = want ? Math.abs(got.length - want) : 0;
+      if (miss < closestMiss) { closestMiss = miss; closest = got; }
+      if (!want) { runs = got; break; }
+    }
   }
   if (!runs) runs = closest || [];
 
