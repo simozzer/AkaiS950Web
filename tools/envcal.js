@@ -1457,7 +1457,18 @@ if (sections.level && sections.level.at.length) {
      */
     var fromKeyUp = /^release/.test(c.section);
     var begins = fromKeyUp ? c.hold : 0.0;
-    var until  = fromKeyUp ? plan.TIMING.gap * 0.9 : c.hold - 0.2;
+
+    /*
+     * A release is watched through ITS OWN gap, not through the run's nominal one.
+     *
+     * plan.TIMING.gap is what the note splitter is tuned to, so it has to stay the SHORTEST
+     * gap in the run or two neighbouring notes merge into one clip. A run that mixes a long
+     * release against short tones wants both at once - a wide window to watch the fall
+     * through, and a narrow gap everywhere else so the run does not take all afternoon. The
+     * window comes from the clip; the splitter keeps the run-wide figure.
+     */
+    var gapHere = c.gapAfter || plan.TIMING.gap;
+    var until  = fromKeyUp ? gapHere * 0.9 : c.hold - 0.2;
 
     function traceAt(win) {
       var out = [], hop = win / 2;
@@ -1482,7 +1493,20 @@ if (sections.level && sections.level.at.length) {
      * across the points meaning what it is quoted as meaning - whether the rise is a straight
      * ramp - rather than measuring the window against the ramp.
      */
-    var trace = traceAt(0.04);
+    /*
+     * The rough pass is shorter for a fall than for a rise, because a fall can be far faster.
+     *
+     * Every release measured before this run was stored 50 or above, where twenty decibels
+     * take a fifth of a second and a forty-millisecond window is neither here nor there. Two
+     * in five of the keygroups on the real disks release BELOW that, and the fastest settings
+     * lose their first twenty decibels inside twenty milliseconds - which forty milliseconds
+     * does not see at all. It reads one window at full level, the next at the floor, and
+     * reports that the note never fell far enough to time.
+     *
+     * Eight milliseconds of noise is 350 samples, so its rms is good to about a third of a
+     * decibel: too coarse for an answer, ample for deciding how wide the real window should be.
+     */
+    var trace = traceAt(c.rising ? 0.04 : 0.008);
 
     if (c.rising && trace.length >= 6) {
       var rough = [], top = Math.max.apply(null, trace.map(function (p) { return p.db; }));
@@ -1497,31 +1521,110 @@ if (sections.level && sections.level.at.length) {
       }
     }
 
+    /*
+     * The same two passes for a fall, sized from the rate rather than from the ramp.
+     *
+     * The rise has had this since the window was caught measuring itself - an attack of 40
+     * whose ramp really is straight read as a 1.4x spread and was called crooked, purely
+     * because an rms over a quarter of the rise is pulled towards the loud end of it. A fall
+     * is averaged exactly the same way and was left alone only because nothing had yet been
+     * measured fast enough for it to show.
+     *
+     * Twenty-five windows to the fall is the same bar the rise is held to, and it keeps the
+     * averaging worth well under a per cent wherever the line is read.
+     *
+     * TWO MILLISECONDS IS THE FLOOR, AND THE SOURCE SETS IT, NOT THE ENVELOPE. 88 samples of
+     * noise give an rms good to about 0.7 dB, and under that the fit would be reading its own
+     * scatter and calling it an envelope. A clip that wants a shorter window than that is one
+     * this rig cannot time - it will say so through the residual rather than by quietly
+     * handing back a number.
+     */
+    /*
+     * A FALLING CLIP'S ZERO IS ITS PEAK, AND THE PEAK HAS TO BE FOUND RATHER THAN ASSUMED.
+     *
+     * It used to be trace[0] - the first window - on the reasoning that a fall starts at its
+     * loudest. It does, but the trace does not start at the note: the onset is located from
+     * the audio to a few milliseconds, and the window is placed from there, so the first
+     * window routinely straddles the strike and reads part silence.
+     *
+     * At forty milliseconds that cost a decibel and nobody noticed. At two it is fatal, and
+     * both show up in the same run: a sustain ladder read every plateau exactly 5 dB too
+     * shallow, and a decay ladder - whose fast settings refine down to a two-millisecond
+     * window - put its first window entirely in the silence BEFORE the note and reported the
+     * plateau as 127 dB ABOVE the peak.
+     *
+     * So the peak is the loudest window in the first twelve milliseconds, and the trace is
+     * cut to start there. The max can only move later than the first window if an earlier one
+     * was quieter, which for a monotone fall means it was not all note - so this finds the
+     * strike without being able to run away down the decay. Searching the WHOLE trace for the
+     * maximum, which is what this did before the fall was traced from key-up, is the thing to
+     * avoid: that lets the NEXT note define the zero.
+     */
+    function headPeak(tr) {
+      var best = 0;
+      for (var h = 1; h < tr.length && (tr[h].t <= 0.012 || h < 3); h++)
+        if (tr[h].db > tr[best].db) best = h;
+      return best;
+    }
+
+    if (!c.rising && trace.length >= 4) {
+      var from0 = trace[headPeak(trace)], quick = 0;
+      for (var q = 1; q < trace.length; q++) {
+        if (from0.db - trace[q].db >= 20) { quick = trace[q].t - from0.t; break; }
+      }
+      if (quick > 0) trace = traceAt(Math.max(0.002, Math.min(0.05, quick / 25)));
+      trace = trace.slice(headPeak(trace));
+    }
+
     if (trace.length < 6) { console.log('      too few points'); return; }
 
-    var peak = Math.max.apply(null, trace.map(function (p) { return p.db; }));
+    var peak = c.rising ? Math.max.apply(null, trace.map(function (p) { return p.db; }))
+                        : trace[0].db;
+
+    /*
+     * About twenty lines per clip, whatever the window came out at.
+     *
+     * Every fourth point was fine when the window was fixed at forty milliseconds and a clip
+     * held a second. A two-millisecond window over a two-second sustain clip is two thousand
+     * points, and five hundred lines of trace per note buries the answer under the working.
+     */
+    var every = Math.max(1, Math.ceil(trace.length / 20));
     trace.forEach(function (p, n) {
-      if (n % 4 && n !== trace.length - 1) return;
-      console.log('      ' + p.t.toFixed(2).padStart(6) + 's  ' +
+      if (n % every && n !== trace.length - 1) return;
+      console.log('      ' + p.t.toFixed(3).padStart(7) + 's  ' +
                   (p.db - peak).toFixed(1).padStart(7) + ' dB');
     });
 
-    /*
-     * A falling trace starts at its loudest, by definition - so that is the reference.
-     *
-     * Taking the maximum over the whole window instead let the NEXT note redefine it. A
-     * release watched for 1.8 s in a 2 s gap caught the following strike in its last frames,
-     * which is 20 dB above anything in the release, and every reading was then measured
-     * against the wrong zero: the same release read 22 usable points in one clip and 5 in
-     * the next, purely by whether the neighbour bled in.
-     *
-     * The gap has since been widened so it should not happen at all, and this makes it
-     * harmless if it ever does.
-     */
-    if (!c.rising && trace.length) peak = trace[0].db;
-
     var floorDb = Math.min.apply(null, trace.map(function (p) { return p.db; }));
     console.log('      it moves ' + (peak - floorDb).toFixed(1) + ' dB');
+
+    /*
+     * WHERE IT COMES TO REST, which for a sustain ladder is the measurement and not a
+     * by-product of one.
+     *
+     * "It moves N dB" is the distance to the quietest window in the trace, and the quietest
+     * of several hundred noisy windows is the deepest excursion rather than the level - on a
+     * plateau read at 0.7 dB of scatter that runs a couple of decibels low, every time, in
+     * the same direction. The median of the last third is the level.
+     *
+     * Read against the trace's own first window, which with an attack of zero is the note at
+     * full level: the machine is there from its first sample, so there is nothing to fit.
+     *
+     * This matters because SUSTAIN_DB rests on ONE reading - a stored 50 measured 19.6 dB
+     * down, scaled to 39.6 across the whole range on the assumption that the thing is a
+     * straight count in decibels. It is not: a stored 0 falls at least 77 dB, which is twice
+     * what that line predicts, so the scale bends somewhere and nobody knows where. Half the
+     * library's keygroups set a sustain.
+     */
+    if (!c.rising) {
+      var rest = trace.slice(Math.floor(trace.length * 2 / 3))
+                      .map(function (p) { return p.db; })
+                      .sort(function (x, y) { return x - y; });
+      var settled = rest[Math.floor(rest.length / 2)];
+      console.log('      it settles ' + (peak - settled).toFixed(1) + ' dB down');
+      (result.settle || (result.settle = [])).push(
+        { label: c.label, setting: c.setting, downDb: peak - settled });
+    }
 
     /*
      * Not "halfway in decibels", which was what this used to quote.
@@ -1631,11 +1734,33 @@ if (sections.level && sections.level.at.length) {
      * good number and one rough one.
      */
     var DEPTH = 20;
+
+    /*
+     * The fit runs between the strike and the plateau, wherever those happen to be.
+     *
+     * A fixed "from 1 dB down to 26" is right for a decay heading to silence and wrong for
+     * every other one. A sustain of 40 falls 23 dB and then holds there, so a fit that keeps
+     * collecting to 26 swallows two seconds of plateau, comes back at a third of the real
+     * rate, and only gives itself away through an 8 dB residual. A sustain of 90 falls 3.6 dB
+     * and the fit never started at all.
+     *
+     * Both ends now scale with the fall this clip actually has: in at 15% of it, out at 85%,
+     * and never past the old 26 dB. That is what makes the sustain ladder measure the DECAY
+     * as well as the plateau - thirteen rates at thirteen depths, which is the whole of the
+     * question of whether the amplitude decay is a rate or a duration. The filter's is
+     * modelled as a duration and the amplitude's was assumed to match, on no measurement:
+     * a duration puts every plateau at the same moment whatever its depth, a rate gets the
+     * shallow ones there sooner.
+     */
+    var span = peak - settled;
+    var enter = Math.min(1, span * 0.15);
+    var stopAt = Math.min(DEPTH + 6, span * 0.85);
+
     var falling = [];
     for (var n2 = 0; n2 < trace.length; n2++) {
       var down = peak - trace[n2].db;
-      if (down > DEPTH + 6) break;             // into the sustain floor, no longer falling
-      if (down > 1) falling.push({ t: trace[n2].t, db: trace[n2].db });
+      if (down > stopAt) break;
+      if (down > enter) falling.push({ t: trace[n2].t, db: trace[n2].db });
     }
 
     if (falling.length < 4) {
@@ -1662,6 +1787,13 @@ if (sections.level && sections.level.at.length) {
     console.log('      it falls ' + DEPTH + ' dB in ' + fell.toFixed(3) + 's' +
                 '   (' + rate.toFixed(1) + ' dB/s over ' + fn + ' points, worst off the line ' +
                 fworst.toFixed(1) + ' dB)');
+
+    // A shallow fall cannot be watched for twenty decibels, so the figure above is that rate
+    // carried on past where the clip stopped falling. Said plainly rather than left to be
+    // inferred from a plateau three decibels below the strike.
+    if (stopAt < DEPTH)
+      console.log('      read over ' + stopAt.toFixed(1) + ' dB of fall, so the 20 is the ' +
+                  'rate extrapolated and not a fall that happened');
     if (fworst > 2.0)
       console.log('      NOT a straight line in decibels - off by ' + fworst.toFixed(1) +
                   ' dB, so this rate is a summary and not a measurement');
