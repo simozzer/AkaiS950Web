@@ -83,19 +83,22 @@ var TIMING = {
 var TESTS = [];
 var KEYGROUPS = [];
 
-function keygroup(low, high, sample) {
+function keygroup(low, high, sample, extra) {
   var set = {};
   Object.keys(BASE).forEach(function (k) { set[k] = BASE[k]; });
+  Object.keys(extra || {}).forEach(function (k) { set[k] = extra[k]; });
   set[0] = high; set[1] = low;
   KEYGROUPS.push({ low: low, high: high, set: set, sample: sample,
                    why: sample + ' over keys ' + low + ' to ' + high });
 }
 
-function play(section, keys, why) {
+function play(section, keys, why, velocity) {
+  var vel = velocity === undefined ? 127 : velocity;
   keys.forEach(function (key) {
     TESTS.push({
-      section: section, analysis: 'mix', label: section + ', key ' + key,
-      key: key, velocity: 127, hold: TIMING.hold, gapAfter: TIMING.gap,
+      section: section, analysis: 'mix',
+      label: section + ', key ' + key + (vel === 127 ? '' : ' at velocity ' + vel),
+      key: key, velocity: vel, hold: TIMING.hold, gapAfter: TIMING.gap,
       setting: key, watch: 'mix', why: why
     });
   });
@@ -138,6 +141,50 @@ keygroup(68, 96, 'T2');
 play('width 25', [64, 66, 68, 69, 70, 71, 74, 80, 86, 89, 90, 91, 92, 94, 96],
      'the widest overlap, sampled densely at both ends');
 
+/*
+ * E and F: THE OTHER AXIS.
+ *
+ * Everything above is played at velocity 127, on the grounds that a POSITIONAL crossfade is
+ * by definition a function of key. That is reasoning, not measurement, and it is the same
+ * reasoning that cost two runs on velocity to release - where the parameter looked inert
+ * because nobody had set the switch that made it work.
+ *
+ * There is a specific way it could fail. If the machine applies the crossfade through the
+ * same gain path as velocity to loudness, the two would interact, and 723 of the library's
+ * 1908 keygroups set a velocity depth - so a real piano patch exercises both at once and
+ * would be wrong in a way neither measured alone would predict.
+ *
+ * So both sections sweep position AND velocity, and they differ in one byte:
+ *
+ *   E  velocity to loudness ZERO, so nothing but the crossfade can change a level. If the
+ *      balance between the two keygroups moves with velocity here, the crossfade itself is
+ *      velocity-dependent.
+ *   F  velocity to loudness 99, the deepest the byte goes. If E is flat and F is not, the
+ *      two are interacting rather than simply multiplying.
+ *
+ * The BALANCE is what to read - the difference between the two tones - because that is
+ * independent of how loud the note is overall, which is exactly what velocity changes in F.
+ */
+
+/* E: the width-7 overlap again, at two more velocities. 127 is already covered above. */
+[1, 64].forEach(function (vel) {
+  play('velocity flat', [50, 52, 55, 58, 60],
+       'does the balance move with velocity when nothing else can move it', vel);
+});
+
+/*
+ * F: its own pair, with velocity to loudness at full.
+ *
+ * Keys 100-108 against 104-112, a five-key overlap, clear of everything else.
+ */
+keygroup(100, 108, 'T1', { 11: 99 });
+keygroup(104, 112, 'T2', { 11: 99 });
+
+[1, 64, 127].forEach(function (vel) {
+  play('velocity loud', [100, 104, 106, 108, 112],
+       'whether the crossfade and velocity-to-loudness interact or simply multiply', vel);
+});
+
 function schedule() {
   var events = [];
   var clips = [];
@@ -173,7 +220,9 @@ function overlaps() {
     { section: 'width 1',  from: 30, to: 30 },
     { section: 'width 3',  from: 42, to: 44 },
     { section: 'width 7',  from: 52, to: 58 },
-    { section: 'width 25', from: 68, to: 92 }
+    { section: 'width 25', from: 68, to: 92 },
+    { section: 'velocity flat', from: 52, to: 58 },
+    { section: 'velocity loud', from: 104, to: 108 }
   ];
 }
 
