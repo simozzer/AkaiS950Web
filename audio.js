@@ -493,8 +493,29 @@ var AkaiAudio = (function () {
      * amount really does invert the envelope and go exactly as far, which this had assumed
      * without evidence. It also starts a unit or two off zero rather than at it; that dead
      * zone is real and measured but not modelled, being worth less than the 9% this fixes.
+     *
+     * RUN 20 REPEATED IT ON A CLEAN TAKE, six amounts each way instead of five, and landed
+     * almost exactly where run 1 did nineteen runs earlier:
+     *
+     *               run 1    run 20
+     *     opening    8.37      8.39
+     *     closing    8.28      8.20
+     *
+     * So 8.3, which is what the measurements have said all along. The 8.5 that was sitting
+     * here matched neither of them and matched no reading in its own comment either - a
+     * value the evidence had quietly outgrown, which is the kind of thing that only shows
+     * up when somebody repeats the measurement rather than reading the note above it.
+     *
+     * The 7.7 and 7.56 from run 5, at the top of this comment, are the ones to discard.
+     * They came from a sweep that hit a stop, which is exactly what the note there warned
+     * about: "the next take should base this test near the floor instead, where there is
+     * room to see the whole sweep." Runs 1 and 20 both do, and both disagree with it.
+     *
+     * The two directions are not quite equal - run 20 has the closing side at 0.978 of the
+     * opening one, against 0.999 for the same disk rendered through this model, so the
+     * asymmetry is the machine rather than the method. 2% is left unmodelled.
      */
-    ENV_OCTAVES: 8.5,     // measured
+    ENV_OCTAVES: 8.3,     // measured twice, runs 1 and 20
 
     /*
      * Measured points, not a formula - see envSeconds.
@@ -841,10 +862,29 @@ var AkaiAudio = (function () {
      */
     SUSTAIN_DB: 39.6,     // 0.4 dB per stored unit, over twelve plateaus
 
-    // Zone loudness, which this model used to ignore entirely. A stored +20 measured
-    // 5.7 dB up on the hardware, so it is a trim of about 0.29 dB per step. An earlier
-    // figure of 0.21 came from the emulation measuring itself.
-    LOUDNESS_DB_PER_UNIT: 0.29,   // measured
+    /*
+     * Zone loudness, which this model used to ignore entirely.
+     *
+     * It was 0.29 dB a unit, from ONE reading - a stored +20 that measured 5.7 dB up - on a
+     * take that was being limited. Before that it was 0.21, which came from the emulation
+     * measuring itself and is the reason this whole rig exists.
+     *
+     * Run 20 walked it properly: eleven rungs from -50 to +50, the whole section held 17 dB
+     * down by a velocity trim every keygroup in it shares, so even +50 was clear of the
+     * ceiling and nothing saturated. Ten of the eleven read (the bottom rung fell under the
+     * tone detector), and they are a straight line to 0.21 dB:
+     *
+     *     stored   -40    -30    -20    -10      0     10     20     30     40     50
+     *     dB     -36.0  -31.9  -27.9  -23.9  -19.7  -15.7  -11.7   -7.8   -3.8    0.0
+     *
+     * 0.401 dB per unit. The old value was 38% low, on 1183 of the library's 1908 keygroups.
+     *
+     * AND IT IS 0.4, which is the third place that number has turned up: the sustain
+     * plateau counts in 0.4 dB steps and so does the positional crossfade, both measured
+     * independently on different runs. The machine has one internal decibel step and this
+     * is it.
+     */
+    LOUDNESS_DB_PER_UNIT: 0.401,  // measured over ten rungs, run 20
 
     /*
      * Velocity to loudness was wrong in the same way sustain was - modelled as a fraction
@@ -996,8 +1036,17 @@ var AkaiAudio = (function () {
      * why two full-level voices overflow its output and it saturates. 17 library pairs are
      * this, the ARP2600 layers, and they have been playing 3.7 dB too quiet apiece.
      *
-     * A step of 0.4 dB is still possible and would need a disk that trims both keygroups
-     * down at source, so the machine is not saturating while the ratio is read.
+     * MEASURED DIRECTLY IN RUN 20, and it is zero to the tenth of a decibel. That run put
+     * both keygroups and both solo references on a zone loudness of -40, which is 16 dB of
+     * headroom, so the machine had nothing to saturate against:
+     *
+     *                  in the layer   sounding alone   difference
+     *     1000 Hz          -19.7           -19.7          0.0 dB
+     *     2200 Hz           -0.0             0.0          0.0 dB
+     *
+     * None of its three layered clips came near the ceiling, where every one of run 15's
+     * five had. So the step that could not be ruled out is ruled out: identical ranges are
+     * not attenuated at all.
      */
     XFADE_SAME_RANGE_DB: 0.0
   };
