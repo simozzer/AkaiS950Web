@@ -539,10 +539,52 @@ var AkaiAudio = (function () {
      * continue at the slope fitted across every measured point. Extrapolating from the two
      * nearest points instead put stored 0 at 320 ms, which every percussive sample refutes.
      */
+    /*
+     * RUN 19 FILLED THE GAP FROM 15 TO 55, AND THE TABLE WAS OUT BY UP TO 35% IN IT.
+     *
+     * There used to be nothing measured between stored 0 and stored 50 - a fifty-byte hole
+     * holding two in five of the VCA releases on the real disks, filled by interpolating
+     * geometrically between the ends. Run 19 walked a release ladder and a decay ladder
+     * across it and the two agree rung for rung to 1.5%, so ENV_TIME is one curve and this
+     * is it:
+     *
+     *     stored        15     20     25     30     35     40     45     50     55
+     *     measured  .01963 .03166 .04182 .06582 .08949 .14385 .19504 .30697 .41063
+     *     the guess .03003 .04276 .06089 .08671 .12347 .17581 .25036 .35650 .41840
+     *     out by      -35%   -26%   -31%   -24%   -28%   -18%   -22%   -14%    -2%
+     *
+     * IT IS NOT SMOOTH, AND THAT IS WHY NO INTERPOLATION COULD HAVE FOUND IT. Ten stored
+     * units double the time, seven times over - x2.079, 2.105, 2.131, 2.134, 2.140, 2.179,
+     * 2.185 - but the two five-unit steps inside each decade are nothing like equal halves
+     * of that:
+     *
+     *     15->20 x1.613   20->25 x1.321
+     *     25->30 x1.574   30->35 x1.360
+     *     35->40 x1.607   40->45 x1.356
+     *     45->50 x1.574   50->55 x1.338
+     *
+     * An even split would be x1.463 twice. It alternates 1.60 then 1.34, four times each,
+     * on both ladders independently - the same counter signature the VCA attack turned out
+     * to have.
+     *
+     * THE STORED-50 ANCHOR WAS THE ONE THAT WAS WRONG. Every value here is a measured RATE
+     * in dB per second turned into a time by VCA_RELEASE_DB. Run 9's anchors are times,
+     * from tracking the filter's corner, so they survived the limiter that spoilt its
+     * levels - and two of the three agree with run 19 on what the span must be: stored 55
+     * implies 43.3 dB and stored 65 implies 42.4, where stored 50 implies 49.3. So 50 was
+     * 16% slow, everything below it was interpolated from a bad endpoint, and the 20% error
+     * that turned up around stored 45 during the crossfade work was the edge of it.
+     *
+     * 0 to 15 is still interpolated, and now across a stretch where the shape is known to
+     * step rather than glide. The fall at stored 15 is over in nine milliseconds, which is
+     * as short as an rms window can time; reaching below it wants the amplitude tracked by
+     * Goertzel on a tone instead, which is a different rig.
+     */
     ENV_TIME: [
-      [0, 0.01040], [50, 0.3565], [55, 0.4184], [60, 0.7224], [65, 0.8806],
-      [70, 1.4037], [80, 2.8136], [85, 4.0370], [90, 4.1172], [95, 8.0947],
-      [99, 10.7401]
+      [0, 0.01040], [15, 0.01963], [20, 0.03166], [25, 0.04182], [30, 0.06582],
+      [35, 0.08949], [40, 0.14385], [45, 0.19504], [50, 0.30697], [55, 0.41063],
+      [60, 0.7224], [65, 0.8806], [70, 1.4037], [80, 2.8136], [85, 4.0370],
+      [90, 4.1172], [95, 8.0947], [99, 10.7401]
     ],
 
     /*
@@ -676,18 +718,49 @@ var AkaiAudio = (function () {
      * speed of the machine - 699 ms against 1366 at stored 70 - on every programme, not just
      * the ones with a velocity depth.
      *
-     * THE FOUR THAT DO NOT FIT ARE THE CURVE, NOT THE SPAN.
+     * THE FOUR THAT DID NOT FIT WERE THE CURVE, NOT THE SPAN - AND RUN 19 FOUND THEM.
      *
-     * The clips at stored 44.6 and 46 imply 49.3 dB, and they are the only ones that miss.
-     * They miss in the same direction, by the same amount, and at the same place the
-     * velocity-release fit missed - so ENV_TIME is about 20% slow around stored 45. Left as
-     * it is: one setting off in a nine-point measured table is a thing to re-measure, not to
-     * paper over with a second constant.
+     * The clips near stored 45 implied 49.3 dB where the rest said 41, and the note here
+     * used to say that meant ENV_TIME was 20% slow around stored 45 and wanted re-measuring.
+     * It did, and it was: the table's anchor at stored 50 was 16% slow, so everything
+     * interpolated below it was wrong and the clips landing there could not agree with the
+     * clips landing anywhere else. See ENV_TIME.
+     *
+     * 40 -> 42.5 comes from the two anchors that survived. Run 9's times were measured by
+     * tracking the filter's corner, so they are frequencies and the limiter that spoilt its
+     * levels left them alone; run 19's rates are clean. Multiply them and stored 55 implies
+     * 43.3 dB and stored 65 implies 42.4, against stored 50's 49.3. Two agree, one was the
+     * bad anchor, and it has been replaced.
+     *
+     * This constant and ENV_TIME move together and their product does not: every rate run 19
+     * measured is reproduced exactly, and the ones it did not reach improve as well - at
+     * stored 65 the model now gives 48.3 dB/s where run 19 read 48.2, against 45.4 before.
      *
      * It is a RATE, so this is how far it falls in one release time from wherever the key
-     * came up, not the distance it has to cover before it stops.
+     * came up, not the distance it has to cover before it stops. The DECAY reads the same
+     * curve and the same span - run 19 measured both ladders at eight settings and they
+     * agree to 1.5% - so there is one number here, not two.
      */
-    VCA_RELEASE_DB: 40,
+    VCA_RELEASE_DB: 42.5,
+
+    /*
+     * WHERE A SUSTAIN OF ZERO ENDS UP: silence, not SUSTAIN_DB down.
+     *
+     * The sustain plateau is a straight line in decibels from stored 99 down to stored 5,
+     * and a stored 0 is NOT on it. Run 19 traced one: it falls at the same rate as every
+     * other sustain setting, straight past where the line would have it stop, hovers a
+     * moment in the 12-bit quantisation around -60 dB and then goes to the noise floor and
+     * stays there. Between 1.873 s and 1.982 s at 48.2 dB/s, so 90 to 96 dB down.
+     *
+     * 96.0 dB is 240 steps of 0.4 exactly - the machine's own decibel step, the one the
+     * crossfade turned out to count in - and it sits inside that bracket.
+     *
+     * It matters more than the odd 6 dB suggests: 1907 of the 1908 library keygroups set a
+     * decay and 723 of them decay to a sustain of 20 or less, so every plucked and struck
+     * sound on every disk is one of these. Until now they stopped dead 39.6 dB down and sat
+     * there ringing.
+     */
+    VCA_SILENCE_DB: 96,
 
     /*
      * WARP - keygroup bytes 12, 13 and 14. A pitch bend at note-on, decaying back to pitch.
@@ -751,26 +824,47 @@ var AkaiAudio = (function () {
     ],
 
 
-    // Sustain is NOT a fraction of the amplitude. A stored 50 measured 19.7 dB down,
-    // where a plain 50/99 of the amplitude would be 5.9 dB down - a 14 dB error, and
-    // sustain varies in half the library's keygroups. It behaves as a straight count in
-    // decibels: 99 is full, and each step down costs about 0.4 dB.
-    SUSTAIN_DB: 39.6,     // measured: a stored 50 read 19.6 dB down
+    /*
+     * Sustain is NOT a fraction of the amplitude. A stored 50 measured 19.7 dB down, where
+     * a plain 50/99 of the amplitude would be 5.9 dB down - a 14 dB error, and sustain
+     * varies in half the library's keygroups. It behaves as a straight count in decibels:
+     * 99 is full, and each step down costs about 0.4 dB.
+     *
+     * CONFIRMED, where it used to rest on that single reading at stored 50. Run 19 walked
+     * twelve plateaus from stored 5 to 99 and they lie on a straight line: 0.3885 dB per
+     * unit forced through stored 99, or 0.4001 unconstrained. 39.6 is exactly 0.4 per unit,
+     * which is the machine's own decibel step - the one the crossfade independently turned
+     * out to count in - so it is kept rather than nudged to fit a residual half-decibel
+     * that is more likely the measurement than the machine.
+     *
+     * A stored ZERO is not on this line at all. See VCA_SILENCE_DB.
+     */
+    SUSTAIN_DB: 39.6,     // 0.4 dB per stored unit, over twelve plateaus
 
     // Zone loudness, which this model used to ignore entirely. A stored +20 measured
     // 5.7 dB up on the hardware, so it is a trim of about 0.29 dB per step. An earlier
     // figure of 0.21 came from the emulation measuring itself.
     LOUDNESS_DB_PER_UNIT: 0.29,   // measured
 
-    // Velocity to loudness was wrong in the same way sustain was - modelled as a
-    // fraction of the amplitude, where the machine counts decibels. At full depth,
-    // velocity 70 measured 31.6 dB below velocity 120: 0.63 dB per velocity step, where
-    // a proportional law would have predicted 4.7 dB for the same span.
-    //
-    // The run also asks for velocity 20, and that note is not in the take at all: at
-    // 0.63 dB a step it lands near 82 dB down, below the noise floor of the recording
-    // and very likely of the machine. The plan asks for something the S950 cannot play.
-    VEL_DB_PER_STEP: 0.63,        // measured, at velToLoudness 99
+    /*
+     * Velocity to loudness was wrong in the same way sustain was - modelled as a fraction
+     * of the amplitude, where the machine counts decibels. At full depth, velocity 70
+     * measured 31.6 dB below velocity 120: 0.63 dB per velocity step, where a proportional
+     * law would have predicted 4.7 dB for the same span.
+     *
+     * MEASURED PROPERLY IN RUN 19, at a depth of 40 where every velocity stays well clear
+     * of the floor. Two keys sounding one keygroup alone, four velocity spans, and the
+     * step comes out the same each time:
+     *
+     *     velocity      1      32      64      96
+     *     dB down    32.7    24.6    16.4     8.0
+     *     per step  0.6423  0.6409  0.6443  0.6387
+     *
+     * 0.642, and dead linear - 0.9% across a 33 dB slide. The old 0.63 came from a depth of
+     * 99, whose bottom two velocities sat at and under the noise floor of a take that was
+     * being limited anyway.
+     */
+    VEL_DB_PER_STEP: 0.642,       // measured directly, run 19
 
     /*
      * THE POSITIONAL CROSSFADE - program header byte 21, and what it does to a note that
@@ -1600,11 +1694,33 @@ var AkaiAudio = (function () {
     // be counting - see CAL
     var velDb = -(127 - vel) * CAL.VEL_DB_PER_STEP * depth;
     var zoneDb = (zone && zone.loudness ? zone.loudness : 0) * CAL.LOUDNESS_DB_PER_UNIT;
-    var sustainDb = -(1 - clamp(kg.vca[2], 0, 99) / 99) * CAL.SUSTAIN_DB;
+    /*
+     * A STORED SUSTAIN OF ZERO IS SILENCE, and it is not the bottom of the line the other
+     * settings sit on - see CAL.VCA_SILENCE_DB. It used to stop 39.6 dB down and hang
+     * there, on 723 of the library's keygroups.
+     */
+    var storedSustain = clamp(kg.vca[2], 0, 99);
+    var sustainDb = storedSustain === 0
+      ? -CAL.VCA_SILENCE_DB
+      : -(1 - storedSustain / 99) * CAL.SUSTAIN_DB;
+
+    /*
+     * THE DECAY IS A RATE, NOT A DURATION, so how long it takes depends on how far it has
+     * to go. Run 19 held the decay at stored 65 and moved the sustain through twelve
+     * settings from 0 to 99: every one of them fell at 48.2 dB per second, to within
+     * 0.415 s against 0.414 for the time to lose twenty decibels. A duration would have put
+     * every plateau at the same moment whatever its depth; a rate gets the shallow ones
+     * there sooner, and that is what the machine does.
+     *
+     * The filter's decay is still modelled as a duration, which was where this rule came
+     * from in the first place and has never been measured. One number, one envelope time,
+     * scaled by the drop it has to cover.
+     */
+    var decaySeconds = envSeconds(kg.vca[1]) * (-sustainDb) / CAL.VCA_RELEASE_DB;
 
     return {
       attack: vcaAttackSeconds(velocityAttackByte(kg.vca[0], kg.velToAttack, vel)),
-      decay: envSeconds(kg.vca[1]),
+      decay: decaySeconds,
       sustain: dbToGain(sustainDb),
       release: envSeconds(velocityReleaseByte(kg.vca[3], kg.velToRelease, vel,
                                               kg.velocityReleaseSwitch)),
