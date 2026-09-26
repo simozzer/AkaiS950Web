@@ -2079,6 +2079,87 @@ if (sections.pitch && sections.pitch.at.length) {
   result.pitch = pitchRows;
 }
 
+/*
+ * MIX - how much of each keygroup is in one note.
+ *
+ * New for run 15 and the positional crossfade. Every keygroup in that run plays a pure tone at
+ * its own frequency with constant pitch set, so the tone does not move with the key - and the
+ * power at each tone reads that keygroup's contribution out of a note the others are mixed
+ * into as well.
+ *
+ * Plain power at a frequency rather than the corner-finding machinery above: the sources are
+ * synthesised sines whose frequencies the plan states exactly, so there is nothing to search
+ * for and no source spectrum to divide out.
+ */
+if (sections.mix && sections.mix.at.length) {
+  console.log('');
+  console.log('MIX  -  how much of each keygroup answers a key');
+
+  var tones = plan.TONES || [];
+  var mixRows = [];
+
+  sections.mix.at.forEach(function (i) {
+    var c = wanted[i];
+
+    // the steady middle of the note, clear of the strike and of the key coming up
+    var span = during(i, 0.2, c.hold - 0.2);
+    if (span === null) return;
+
+    mixRows.push({
+      label: c.label, section: c.section, key: c.setting,
+      power: tones.map(function (hz) { return powerAt(span, hz); })
+    });
+  });
+
+  if (!mixRows.length) { console.log('   nothing to read'); }
+  else {
+    /*
+     * Each tone against its OWN loudest clip, which is a key where that keygroup sounds alone.
+     *
+     * That is what makes the run self-calibrating: no absolute level matters, only how far
+     * each keygroup is below the level it reaches when nothing else is mixed with it.
+     */
+    var full = tones.map(function (hz, t) {
+      return Math.max.apply(null, mixRows.map(function (r) { return r.power[t]; }));
+    });
+
+    function dbOf(p, t) {
+      return full[t] > 0 && p > 0 ? 10 * Math.log10(p / full[t]) : -99;
+    }
+
+    var section = null;
+
+    mixRows.forEach(function (r) {
+      if (r.section !== section) {
+        section = r.section;
+        console.log('');
+        console.log('   ' + section);
+        console.log('     key   ' + tones.map(function (hz) {
+          return (hz + ' Hz').padStart(10);
+        }).join('') + '        sum');
+      }
+
+      // the sum says whether the crossfade conserves power, conserves amplitude, or neither
+      var sum = 0;
+      r.power.forEach(function (p, t) { if (full[t] > 0) sum += p / full[t]; });
+
+      console.log('   ' + String(r.key).padStart(5) + '   ' +
+                  r.power.map(function (p, t) {
+                    var d = dbOf(p, t);
+                    return (d <= -40 ? '     -' : d.toFixed(1)).padStart(10);
+                  }).join('') +
+                  '   ' + (10 * Math.log10(Math.max(sum, 1e-9))).toFixed(1).padStart(6) + ' dB');
+    });
+
+    console.log('');
+    console.log('   levels are dB against each tone\'s own loudest clip - a key where that');
+    console.log('   keygroup sounds alone. The sum column is the two together: 0 dB means the');
+    console.log('   fade conserves power, +3 means both are still at full level.');
+  }
+
+  result.mix = mixRows;
+}
+
 console.log('');
 
 if (jsonOut) {

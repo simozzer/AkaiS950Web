@@ -22,7 +22,15 @@
  * keys, to tell a key follow from an attack offset. Rendering that gives three notes all at
  * 1000 Hz where the machine will give 500, 1000 and 2000, so the dry run cannot exercise it.
  *
- * That is a gap in this tool and not in the measurement. The pitch analysis reads each clip in
+ * AND IT DOES NOT LAYER. keygroupFor returns the first keygroup whose range covers a note,
+ * where the engines start a voice for EVERY one that matches. Invisible until run 15, whose
+ * whole subject is what happens on a key two keygroups answer - so the dry run there shows one
+ * tone per note where the machine and the engines will both show two.
+ *
+ * The mix analysis was checked against synthesised mixtures instead, which is the part that
+ * needed proving: three tones together, read back to 0.00 dB at every level down to -30.
+ *
+ * Both of these are gaps in this tool and not in the measurement. The pitch analysis reads each clip in
  * cents against its OWN settled pitch, so three notes at three frequencies is what it expects;
  * the tracker was checked directly at 500, 1000 and 2500 Hz and read every one to under a tenth
  * of a cent. Resampling here would mean interpolation and loop handling of its own, with its

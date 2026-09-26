@@ -108,3 +108,6 @@ tools/model4.json
 # landing/ is source and is committed. .wrangler is wrangler's own cache of which account
 # it is talking to, and is not.
 .wrangler/
+
+tools/ENVCAL15.img
+tools/ENVCAL15.hfe

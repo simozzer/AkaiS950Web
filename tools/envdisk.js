@@ -327,6 +327,21 @@ function buildDisk(name, log) {
     prog = findProgram(disk);
   });
 
+  /*
+   * Anything the plan wants in the programme's own 38-byte header.
+   *
+   * Every run before the fifteenth cared only about keygroups, so nothing here could reach
+   * the header at all. Run 15 needs byte 21, the positional crossfade, which is a property of
+   * the PROGRAMME rather than of any keygroup - and header bytes are poked by offset the same
+   * way keygroup bytes are, so the plan states them the same way.
+   */
+  if (plan.HEADER) {
+    Object.keys(plan.HEADER).forEach(function (k) {
+      disk.pokeFile(prog, parseInt(k, 10), plan.HEADER[k]);
+    });
+    prog = findProgram(disk);
+  }
+
   return disk;
 }
 
