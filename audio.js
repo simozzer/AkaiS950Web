@@ -834,18 +834,31 @@ var AkaiAudio = (function () {
      * and nobody has worked it out. Both points are kept, so every measured width reproduces
      * its own reading and the disagreement is confined to widths nobody has played.
      *
+     * CONFIRMED ACROSS TWO CLEAN SESSIONS. Run 15 was re-recorded after run 17, on its own
+     * disk, and its thirteen-key overlap sits on keys 72 to 84 where run 17's sits on 85 to
+     * 97. Seven positions, different keys, different disk, different take:
+     *
+     *     x        0.071  0.214  0.357  0.500  0.643  0.786  0.929
+     *     run 17     0.0   -0.4   -1.6   -3.2   -6.0  -11.6  -21.6
+     *     run 15     0.0   -0.4   -1.6   -3.1   -6.0  -11.6  -21.7
+     *
+     * Run 15's SEVEN-key overlap is a width run 17 never played, and it contributes the
+     * four positions at 0.125, 0.375, 0.625 and 0.875 - each of which sharpens where a step
+     * falls rather than moving one.
+     *
      * Read at x = 0 and x = 1 only for overlaps wider than 21 keys, since x lives in
      * [1/(N+1), N/(N+1)] and width 21 already spans 0.045 to 0.955. Both ends are
      * extrapolations and nothing on any disk has been seen to need them.
      */
     XFADE_DB: [
       [0.00000,   0.00], [0.04545,   0.00], [0.07143,   0.00], [0.09091,   0.00],
-      [0.10000,   0.00], [0.13636,  -0.40], [0.14286,  -0.40], [0.16667,  -0.40],
-      [0.20000,  -0.40], [0.21429,  -0.40], [0.25000,  -0.80], [0.30000,  -1.20],
-      [0.31818,  -1.60], [0.33333,  -1.60], [0.35714,  -1.60], [0.40000,  -2.00],
-      [0.50000,  -3.20], [0.60000,  -5.60], [0.64286,  -6.00], [0.66667,  -6.80],
-      [0.68182,  -6.80], [0.70000,  -8.00], [0.75000,  -8.80], [0.78571, -11.60],
-      [0.80000, -11.60], [0.83333, -13.20], [0.85714, -15.20], [0.86364, -15.20],
+      [0.10000,   0.00], [0.12500,   0.00], [0.13636,  -0.40], [0.14286,  -0.40],
+      [0.16667,  -0.40], [0.20000,  -0.40], [0.21429,  -0.40], [0.25000,  -0.80],
+      [0.30000,  -1.20], [0.31818,  -1.60], [0.33333,  -1.60], [0.35714,  -1.60],
+      [0.37500,  -1.60], [0.40000,  -2.00], [0.50000,  -3.20], [0.60000,  -5.60],
+      [0.62500,  -5.60], [0.64286,  -6.00], [0.66667,  -6.80], [0.68182,  -6.80],
+      [0.70000,  -8.00], [0.75000,  -8.80], [0.78571, -11.60], [0.80000, -11.60],
+      [0.83333, -13.20], [0.85714, -15.20], [0.86364, -15.20], [0.87500, -15.20],
       [0.90000, -17.60], [0.90909, -21.60], [0.92857, -21.60], [0.95455, -28.00],
       [1.00000, -39.20]
     ],
@@ -859,12 +872,27 @@ var AkaiAudio = (function () {
      * the library are exactly this - the ARP2600 layers - and the obvious rule, treating
      * identical ranges as an overlap and fading across it, would have half-silenced them.
      *
-     * PROVISIONAL. Run 15 read -3.7 dB and run 15 went through the limiter, at 25% of its
-     * samples pinned. The same take read the overlap midpoint 1.4 dB too deep, and -3.7 is
-     * about that far from -3.2, which is the 8-step value the clean midpoint turned out to
-     * be. So the true figure is very likely -3.2 and the same eight steps, but that is
-     * inference from a neighbouring measurement rather than a reading, and run 15 has not
-     * been re-recorded. Left at what was actually measured until it is.
+     * STILL PROVISIONAL, AND THE ONLY THING ON THIS DISK THAT IS.
+     *
+     * This section is the loudest in the run - it is the one place where two keygroups both
+     * sound at nearly full level, so the two tones sum to the highest crest anywhere - and
+     * it is the only section that is still hitting the recording's ceiling. The rest of
+     * run 15 re-recorded completely clean; these five clips are 14.5% pinned.
+     *
+     * Its readings have moved as the limiting has come off, and in one direction:
+     *
+     *     25% pinned (first take)    -3.7 dB apiece
+     *     14.5% pinned (second)      -0.7 dB apiece, the pair summing to +2.3
+     *
+     * A pair at full level sums to +3.0. So the honest reading of the trend is that
+     * identical ranges are probably NOT attenuated at all - the machine finds no lower and
+     * no upper keygroup, so there is nothing to fade and it simply layers them. That would
+     * remove the special case entirely.
+     *
+     * Not shipped on that, because it is a trend across two spoilt takes rather than a
+     * measurement. -3.7 is what was actually read, and it stays until one section of a
+     * quieter take says otherwise. Note that it is WRONG IN THE SAFE DIRECTION for the 17
+     * library pairs this applies to: too quiet by a few dB rather than too loud.
      */
     XFADE_SAME_RANGE_DB: -3.7
   };
@@ -1086,23 +1114,23 @@ var AkaiAudio = (function () {
    * crossfade off, or with only one keygroup answering, every gain is 1.
    *
    * PAIRWISE, AND THE DECIBELS ADD. A keygroup overlapping two neighbours is faded against
-   * each of them and the two attenuations multiply. Run 15 measured a three-deep stack -
-   * keygroups at 100-112, 104-116 and 108-120, played through the middle of it - and that is
-   * what fits:
+   * each of them and the two attenuations multiply. Run 15 plays a three-deep stack -
+   * keygroups at 100-112, 104-116 and 108-120 - and once it was re-recorded clean the answer
+   * is not close:
    *
-   *     key 110    T1      T2      T3
-   *     measured  -12.2    -1.8   -12.7
-   *     product   -14.8    -3.0   -14.8
-   *     deepest   -10.3    -1.5   -10.3
+   *     key        106          108              110              112          114
+   *     keygroup  T1    T2   T1    T2    T3   T1    T2    T3   T1    T2   T3   T2    T3
+   *     measured -1.2  -7.9 -3.6 -3.1 -31.4 -11.2 -2.3 -11.4 -31.1 -3.1 -3.8 -8.0 -1.2
+   *     product  -1.2  -8.0 -3.6 -3.2 -30.8 -11.2 -2.4 -11.2 -30.8 -3.2 -3.6 -8.0 -1.2
+   *     deepest  -1.2  -8.0 -3.2 -3.2 -17.6  -8.0 -1.2  -8.0 -17.6 -3.2 -3.2 -8.0 -1.2
    *
-   * Neither is exact - the truth sits between them, and the product runs about 2 dB deep
-   * through the middle - but the ends decide it. At key 112 the product puts the bottom
-   * keygroup near -39 and taking only the deepest single fade puts it at -22; it measured
-   * -33, under the -30 where a tone that is not sounding at all reads in these takes. A
-   * reading at the floor is consistent with -39 and rules out -22.
+   * The product fits at 0.21 dB rms over thirteen readings; taking only the deepest single
+   * fade misses by 5.52 and is out by 14 dB where three keygroups pile up at once.
    *
-   * So: the product, with about 2 dB of slack where three keygroups overlap at once, and
-   * exact where two do. Two is the ordinary case and the only one the library's pianos use.
+   * THE LIMITED TAKE COULD NOT TELL THEM APART. Its two deep readings sat at the noise
+   * floor - about -33 where the truth is -31 - and it put the product about 2 dB deep
+   * through the middle, so the rule was adopted on the strength of the floor ruling out the
+   * alternative rather than on the fit. Clean, the fit decides it outright.
    */
   function crossfadeGains(note, ranges, on) {
     var out = [], n = ranges ? ranges.length : 0;
