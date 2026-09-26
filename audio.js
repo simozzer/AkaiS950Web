@@ -692,7 +692,29 @@ var AkaiAudio = (function () {
     // The filter's envelope runs quicker than the VCA's for the same stored number:
     // decay 80 reached the base in 2.25 s against the VCA's 2.86. One measurement each,
     // so provisional - but a measurement, where sharing the VCA's scale was a guess.
-    VCF_TIME_SCALE: 0.78, // measured: 2.25 s against the VCA's 2.86
+    /*
+     * MEASURED PROPERLY IN RUN 21, where it had been one filter decay set against one
+     * amplitude decay from a different run.
+     *
+     * Run 20 tried and could not: it watched the filter's RELEASE, which only happens after
+     * the key comes up - and the amplitude is released at the same moment, so the note was
+     * dying at 15 dB a second underneath the measurement. The probes inside each clip
+     * disagreed by up to 3.4x, and the disagreement grew with the setting, which is that
+     * fault rather than the filter.
+     *
+     * Run 21 watched the filter's DECAY instead. A decay happens while the key is still
+     * down, so the amplitude could be held dead flat - attack 0, decay 0, sustain 99,
+     * release 0 - and the corner followed against a level that does not move at all. Six
+     * settings, each read against the same disk rendered through this model so that the
+     * measurement's own lag cancels:
+     *
+     *     stored          50     55     60     65     70     75
+     *     hardware/render 0.94   1.00   0.85   0.98   0.98   0.86
+     *     implied scale   0.68   0.78   0.63   0.76   0.76   0.66
+     *
+     * 0.71, spread 0.06. Run 20's 0.58 was mostly the droop.
+     */
+    VCF_TIME_SCALE: 0.71, // measured over six settings, run 21
 
     /*
      * THE RELEASE IS A RATE, NOT A DURATION.
@@ -1545,8 +1567,28 @@ var AkaiAudio = (function () {
     var written = kg.vcfWritten === undefined ? true : kg.vcfWritten;
 
     var a = written ? envSeconds(kg.vcf[0]) * CAL.VCF_TIME_SCALE : 0;
-    var d = written ? envSeconds(kg.vcf[1]) * CAL.VCF_TIME_SCALE : 0;
     var sustain = written ? clamp(kg.vcf[2], 0, 99) / 99 : 1;
+
+    /*
+     * THE FILTER'S DECAY IS A RATE TOO, so its length scales with how far it has to go.
+     *
+     * Run 19 found this for the amplitude. The filter's was left as a DURATION because that
+     * is how it was written before anybody measured either, and run 21 asked it properly:
+     * one decay setting, four depths for it to cover, with the amplitude held dead flat so
+     * the corner could be followed against a level that does not move.
+     *
+     *     octaves travelled   1.97   1.34   0.65
+     *     seconds             0.82   0.66   0.51
+     *
+     * A duration is a flat line through those. They fit time = 0.354 + 0.235 x octaves to
+     * within 0.008 s - and the same disk rendered through this model, which WAS a duration,
+     * comes back with a slope of -0.038. The intercept is the method's own lag; the slope is
+     * the filter, and it is 0.235 s per octave at stored 65.
+     *
+     * So both envelopes are rates and the machine has one generator, which is what
+     * VCF_TIME_SCALE being a plain ratio always implied.
+     */
+    var d = written ? envSeconds(kg.vcf[1]) * CAL.VCF_TIME_SCALE * (1 - sustain) : 0;
     var rel = written ? envSeconds(kg.vcf[3]) * CAL.VCF_TIME_SCALE : 0;
     var depth = written ? ((kg.vcfAmount || 0) / 50) * CAL.ENV_OCTAVES : 0;
 
