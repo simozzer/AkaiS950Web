@@ -773,10 +773,19 @@ function analyse(file) {
   console.log('');
 
   // ----------------------------------------------------------- rate ladder
+  /*
+   * A SECTION A PLAN DOES NOT HAVE IS NOT AN ERROR.
+   *
+   * This file was written against lfoplan.js, which carries every section, so it read
+   * by.rate and the rest straight. The moment a focused plan appeared - lfoplan2.js, four
+   * clips about aftertouch and nothing else - that threw on the first section it did not
+   * find, after printing the heading for it. The headings are left where they are and each
+   * section simply finds nothing, which is what an empty section should look like.
+   */
   console.log('RATE  (byte 16, at depth 50)');
   console.log('  setting      Hz   cycles  explains   depth');
   var ratePoints = [];
-  results.rate = by.rate.map(function (c) {
+  results.rate = (by.rate || []).map(function (c) {
     var m = measure(x, rate, c, at.offset);
     var hz = m.rate ? m.rate.hz : null;
     var ok = m.rate && m.rate.explains > 0.3 && m.rate.cycles >= 2;
@@ -826,7 +835,7 @@ function analyse(file) {
   console.log('DEPTH  (byte 17, at rate ' + plan.MID_RATE + ')');
   console.log('  setting     cents   read from       peak   level       Hz');
   var depthPoints = [];
-  results.depth = by.depth.map(function (c) {
+  results.depth = (by.depth || []).map(function (c) {
     var m = measure(x, rate, c, at.offset);
     console.log('    ' + String(c.setting).padStart(4) + '  ' + fmt(m.depthCents, 2, 9) +
                 '  ' + (m.depthFrom || '-').padEnd(15) + fmt(m.peakCents, 2, 6) +
@@ -852,7 +861,7 @@ function analyse(file) {
   console.log('DELAY  (byte 15, at rate ' + plan.MID_RATE + ' and full depth)');
   console.log('  byte   leaves flat   quarter      half      full depth     depth');
   var delayPoints = [];
-  results.delay = by.delay.map(function (c) {
+  results.delay = (by.delay || []).map(function (c) {
     // the front of this clip is the measurement, so almost none of it is skipped, and
     // the rate is read from the back where the modulation is certainly running
     var m = measure(x, rate, c, at.offset, { skipSeconds: 0.01, steadyFrom: c.hold * 0.55 });

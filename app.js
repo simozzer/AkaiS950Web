@@ -1692,7 +1692,7 @@
      */
     var osc = null;
     if (vcf && vcf.kg && $('useLfo').checked && src.detune) {
-      var mod = AkaiAudio.lfo(vcf.kg, wheel);
+      var mod = AkaiAudio.lfo(vcf.kg, wheel, pressure);
       if (mod) {
         var t1 = ac.currentTime;
 
@@ -2350,6 +2350,16 @@
   var wheel = 0;
 
   /*
+   * Channel aftertouch, 0..127, which drives keygroup byte 21 exactly as the wheel drives
+   * byte 22 - see AkaiAudio.lfo. It reaches a note the same way the modwheel above does,
+   * at the strike and not after, for the same reason.
+   *
+   * One value for the whole keyboard: the S950 has no polyphonic pressure input, so there
+   * is nothing per-key to keep.
+   */
+  var pressure = 0;
+
+  /*
    * Where the pitch wheel is, 0..16383 with 8192 at rest, and how far it bends.
    *
    * Unlike the modwheel above, this one DOES reach notes already sounding - that is the whole
@@ -2391,6 +2401,7 @@
     if (status === 0x90 && d[2] > 0) midiNoteOn(d[1], d[2]);
     else if (status === 0x80 || (status === 0x90 && d[2] === 0)) releaseNote(d[1]);
     else if (status === 0xB0 && d[1] === 1) wheel = d[2];                 // modwheel
+    else if (status === 0xD0) pressure = d[1];                            // channel aftertouch
     else if (status === 0xE0 && d.length >= 3) {                          // pitch wheel
       pitchWheel = (d[2] << 7) | (d[1] & 0x7F);
       applyBend();

@@ -1144,13 +1144,31 @@ var AkaiAudio = (function () {
    * caller can skip building an oscillator for the 90% of keygroups whose depth is zero
    * and whose wheel is down.
    */
-  function lfo(kg, wheel) {
+  function lfo(kg, wheel, pressure) {
     if (!kg) return null;
 
     var own = (kg.lfoDepth || 0) * LFO.DEPTH_CENTS_PER_UNIT;
+
+    /*
+     * THE TWO PERFORMANCE CONTROLLERS, which turned out to be one mechanism.
+     *
+     * The modwheel is byte 22 and channel pressure is byte 21, and the aftertouch run
+     * measured them the same: at full, aftertouch gave 71.95 cents against the wheel's
+     * 72.3, so one constant serves both. Byte 21 is proportional like byte 22 - 0.511 of
+     * full at 50, where a straight proportion is 0.505 and byte 22 gave 0.509. And they
+     * ADD: the wheel alone read 71.87 cents, the wheel and pressure together 149.79, where
+     * a machine taking the larger of the two would have stayed at 71.87.
+     *
+     * Byte 21 was read and dropped for years because it is 0 in all 1908 keygroups of one
+     * person's disks. This page reads anybody's.
+     */
     var added = LFO.WHEEL_CENTS_AT_FULL *
                 ((kg.lfoDepthToWheel === undefined ? 50 : kg.lfoDepthToWheel) / 99) *
-                (Math.max(0, Math.min(127, wheel || 0)) / 127);
+                (Math.max(0, Math.min(127, wheel || 0)) / 127)
+              + LFO.WHEEL_CENTS_AT_FULL *
+                ((kg.lfoDepthToAftertouch || 0) / 99) *
+                (Math.max(0, Math.min(127, pressure || 0)) / 127);
+
     var cents = own + added;
     if (cents < 0.5) return null;
 
