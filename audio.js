@@ -770,7 +770,77 @@ var AkaiAudio = (function () {
     // The run also asks for velocity 20, and that note is not in the take at all: at
     // 0.63 dB a step it lands near 82 dB down, below the noise floor of the recording
     // and very likely of the machine. The plan asks for something the S950 cannot play.
-    VEL_DB_PER_STEP: 0.63         // measured, at velToLoudness 99
+    VEL_DB_PER_STEP: 0.63,        // measured, at velToLoudness 99
+
+    /*
+     * THE POSITIONAL CROSSFADE - program header byte 21, and what it does to a note that
+     * two keygroups both answer.
+     *
+     * 48 of the 390 library programmes set it AND have overlapping keygroups, and they are
+     * the multi-sampled instruments: GRAND-PNO1 and 2 with nine keygroups apiece, GRANDX,
+     * CB CEL VL. Where the hardware fades one sample into the next across the overlap, every
+     * engine here used to sound both at full level - about 6 dB too loud, with two different
+     * recordings of the same note beating against each other.
+     *
+     * WHERE A KEY SITS IN AN OVERLAP
+     *
+     *     x = (i + 1) / (N + 1)     i the 0-based key within the overlap, N its width
+     *
+     * The lower keygroup - the one whose range starts lower - reads the table at x, and the
+     * upper one at 1 - x. Symmetric: run 17 read both tones at every key and they mirror.
+     *
+     * The ends are what make this mapping right rather than the obvious i/(N-1), which puts
+     * the first and last key at 0 and 1. Seven widths from 1 key to 21 were measured, and
+     * wherever two of them land on the same x they agree:
+     *
+     *     x        0.14     0.21     0.67     0.79     0.86
+     *     widths  13, 21    13, 9   2, 5, 21  13, 9    13, 21
+     *     dB       -0.4     -0.6     -8.7     -15.3    -19.1
+     *
+     * and a ONE-KEY overlap - 13 pairs in the library have one - sits at x = 1/2 and splits
+     * evenly at -4.5 dB, which i/(N-1) cannot express at all because it divides by zero.
+     *
+     * A TABLE RATHER THAN A CURVE, and the data is why. cos(pi x / 2) ^ 1.44 fits it to about
+     * 0.5 dB rms, which is close enough to be tempting, but the measured values arrive in
+     * clumps - -0.2 at three different x, then -0.3, -0.4, -0.6, a jump to -1.2 - which is
+     * what a gain LOOKUP does and not what a curve does. Fitting a smooth function through a
+     * quantised one is how ENV_TIME came to be 20% wrong in the middle, so this keeps the
+     * measurement and interpolates between the points.
+     *
+     * WIDTH 9 DISAGREES WITH THE OTHERS AT ITS LAST KEY. At x = 0.9 it reads -22.2 where
+     * width 13 at 0.929 and width 21 at 0.909 both read -26.2, so interpolating those two
+     * across 0.9 gives about -25. Nearly 3 dB, far above the 0.1 dB the rest of the widths
+     * agree to, and it is the only place they part. Both points are kept: every width then
+     * reproduces its own measurement exactly, and the disagreement is confined to widths
+     * nobody has played.
+     *
+     * Read at x = 0 and x = 1 only for overlaps wider than 21 keys, since x lives in
+     * [1/(N+1), N/(N+1)] and width 21 already spans 0.045 to 0.955. Both ends are
+     * extrapolations and nothing on any disk has been seen to need them.
+     */
+    XFADE_DB: [
+      [0.00000,   0.00], [0.04545,  -0.20], [0.07143,  -0.20], [0.09091,  -0.20],
+      [0.10000,  -0.30], [0.13636,  -0.40], [0.14286,  -0.40], [0.16667,  -0.50],
+      [0.20000,  -0.60], [0.21429,  -0.60], [0.25000,  -1.20], [0.30000,  -1.50],
+      [0.31818,  -2.00], [0.33333,  -2.00], [0.35714,  -2.25], [0.40000,  -2.60],
+      [0.50000,  -4.50], [0.60000,  -7.30], [0.64286,  -7.95], [0.66667,  -8.70],
+      [0.68182,  -8.70], [0.70000, -10.25], [0.75000, -11.55], [0.78571, -15.35],
+      [0.80000, -15.30], [0.83333, -17.05], [0.85714, -19.15], [0.86364, -19.10],
+      [0.90000, -22.25], [0.90909, -26.25], [0.92857, -26.25], [0.95455, -32.75],
+      [1.00000, -40.00]
+    ],
+
+    /*
+     * TWO KEYGROUPS ON EXACTLY THE SAME KEYS ARE NOT FADED. They sit at a constant 3.7 dB
+     * down apiece, the same at every key across a thirteen-key range, which is what run 15
+     * measured with the crossfade ON.
+     *
+     * It is not the table read at some x: it does not move with the key at all, and the
+     * table has no value that flat. It matters because 17 pairs in the library are exactly
+     * this - the ARP2600 layers - and the obvious rule, treating identical ranges as an
+     * overlap and fading across it, would have half-silenced every one of them.
+     */
+    XFADE_SAME_RANGE_DB: -3.7
   };
 
   /*
@@ -958,6 +1028,99 @@ var AkaiAudio = (function () {
 
     var semis = range * (off >= 0 ? off / 8191 : off / 8192);
     return Math.pow(2, semis / 12);
+  }
+
+  /**
+   * How far the crossfade pulls a keygroup down at position `x` across its overlap, in dB.
+   *
+   * Straight-line interpolation between the measured points, in decibels, because that is
+   * the domain the machine turned out to be counting in and the table is dense enough that
+   * the segments are short. See CAL.XFADE_DB.
+   */
+  function crossfadeDb(x) {
+    var T = CAL.XFADE_DB;
+    var v = clamp(x, 0, 1);
+
+    for (var i = 1; i < T.length; i++) {
+      if (v > T[i][0]) continue;
+
+      var span = T[i][0] - T[i - 1][0];
+      var t = span === 0 ? 0 : (v - T[i - 1][0]) / span;
+      return T[i - 1][1] + t * (T[i][1] - T[i - 1][1]);
+    }
+
+    return T[T.length - 1][1];
+  }
+
+  /**
+   * What each keygroup answering a note should be played at, as a linear gain.
+   *
+   * `ranges` is one {low, high} per keygroup that the note and velocity already selected, in
+   * the program's own order; the result is one gain per entry, in the same order. With the
+   * crossfade off, or with only one keygroup answering, every gain is 1.
+   *
+   * PAIRWISE, AND THE DECIBELS ADD. A keygroup overlapping two neighbours is faded against
+   * each of them and the two attenuations multiply. Run 15 measured a three-deep stack -
+   * keygroups at 100-112, 104-116 and 108-120, played through the middle of it - and that is
+   * what fits:
+   *
+   *     key 110    T1      T2      T3
+   *     measured  -12.2    -1.8   -12.7
+   *     product   -14.8    -3.0   -14.8
+   *     deepest   -10.3    -1.5   -10.3
+   *
+   * Neither is exact - the truth sits between them, and the product runs about 2 dB deep
+   * through the middle - but the ends decide it. At key 112 the product puts the bottom
+   * keygroup near -39 and taking only the deepest single fade puts it at -22; it measured
+   * -33, under the -30 where a tone that is not sounding at all reads in these takes. A
+   * reading at the floor is consistent with -39 and rules out -22.
+   *
+   * So: the product, with about 2 dB of slack where three keygroups overlap at once, and
+   * exact where two do. Two is the ordinary case and the only one the library's pianos use.
+   */
+  function crossfadeGains(note, ranges, on) {
+    var out = [], n = ranges ? ranges.length : 0;
+    for (var a = 0; a < n; a++) out.push(1);
+    if (!on || n < 2) return out;
+
+    function answers(r) { return note >= r.low && note <= r.high; }
+
+    for (var g = 0; g < n; g++) {
+      var me = ranges[g], db = 0;
+      if (!answers(me)) continue;                    // not sounding; its gain means nothing
+
+      for (var h = 0; h < n; h++) {
+        if (h === g) continue;
+        var it = ranges[h];
+
+        // A keygroup that does not answer this note is not fading against anything here.
+        // Skipped rather than clamped into the overlap: clamping turns a caller's mistake
+        // into a plausible-looking attenuation, which is how a 0.7 dB error hid in the
+        // first test of this function.
+        if (!answers(it)) continue;
+
+        if (me.low === it.low && me.high === it.high) {
+          db += CAL.XFADE_SAME_RANGE_DB;
+          continue;
+        }
+
+        var lo = Math.max(me.low, it.low), hi = Math.min(me.high, it.high);
+        if (hi < lo) continue;                       // not actually sharing these keys
+
+        var width = hi - lo + 1;
+        var x = (note - lo + 1) / (width + 1);
+
+        // The one that starts lower fades OUT going up. Where they start together the one
+        // that ends lower does - which run 17 never played, and neither did any library
+        // programme yet seen, so it is a choice rather than a reading.
+        var lower = me.low < it.low || (me.low === it.low && me.high < it.high);
+        db += crossfadeDb(lower ? x : 1 - x);
+      }
+
+      out[g] = dbToGain(db);
+    }
+
+    return out;
   }
 
   function warpRatio(kg, velocity, t) {
@@ -1409,6 +1572,8 @@ var AkaiAudio = (function () {
     warpSeconds: warpSeconds,
     warpRatio: warpRatio,
     bendRatio: bendRatio,
+    crossfadeDb: crossfadeDb,
+    crossfadeGains: crossfadeGains,
     velocityReleaseByte: velocityReleaseByte,
     butterworth: butterworth,
     filterWords: filterWords,

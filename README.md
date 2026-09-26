@@ -95,6 +95,9 @@ under the envelopes it modulates. **Both zones and the flags** make the third co
   which is most of what the filter hears
 - Honours loop points on playback — a looping sample sustains rather than stopping,
   which the WinForms version cannot do
+- MIDI sounds **every keygroup that answers a key**, not just the first, and fades them
+  into one another where the program's positional crossfade is on — which is how the
+  multi-sampled pianos are meant to sound
 - Adds samples from any audio file the browser can decode, converted to Akai 12-bit
 - Slices a break into one-shots on detected onsets, mapping them to consecutive keys
 - **New image** starts an empty 800K disk, to fill and download

@@ -1730,7 +1730,13 @@
     if (env) {
       var g = ac.createGain();
       var t0 = ac.currentTime;
-      var peak = Math.max(env.peak, 1e-4);
+
+      // The positional crossfade, if two keygroups are answering this key - a constant
+      // worked out at note-on and folded into the envelope's peak, because that is where
+      // the machine puts it: the fade is a function of the KEY and nothing about it moves
+      // while the note sounds. See AkaiAudio.crossfadeGains.
+      var fade = vcf.gain === undefined ? 1 : vcf.gain;
+      var peak = Math.max(env.peak * fade, 1e-4);
       var held = Math.max(peak * env.sustain, 1e-4);
 
       g.gain.setValueAtTime(1e-4, t0);
@@ -2227,19 +2233,55 @@
     return null;
   }
 
-  /** The keygroup covering a note in the selected program, with the sample that velocity picks. */
-  function voiceFor(note, velocity) {
-    if (!sel || !sel.entry || sel.entry.type !== 'P') return null;
+  /**
+   * EVERY keygroup covering a note in the selected program, with the sample velocity picks
+   * in each, and the crossfade gain that keygroup should be played at.
+   *
+   * Plural, and it used to be singular - it returned the first keygroup whose range covered
+   * the note and stopped looking. Overlapping keygroups DO layer on the machine, which the
+   * desktop engine and the plugin have both always done, so this page was quietly playing
+   * one sample where the hardware plays two. It shows on exactly the programmes people care
+   * about: GRAND-PNO1 and 2 have nine keygroups apiece and overlap all the way up.
+   *
+   * The two ZONES inside a keygroup are a different matter and still singular - they are
+   * velocity alternatives, and only one of them answers any given strike.
+   */
+  function voicesFor(note, velocity) {
+    if (!sel || !sel.entry || sel.entry.type !== 'P') return [];
 
     var kgs = keygroupsOf(sel.disk, sel.entry);
+    var found = [], ranges = [];
+
     for (var i = 0; i < kgs.length; i++) {
       var kg = kgs[i];
-      if (note < Math.min(kg.lowKey, kg.highKey) || note > Math.max(kg.lowKey, kg.highKey)) continue;
+      var lo = Math.min(kg.lowKey, kg.highKey), hi = Math.max(kg.lowKey, kg.highKey);
+      if (note < lo || note > hi) continue;
 
       var picked = zoneSample(sel.disk, kg, velocity);
-      if (picked) return { kg: kg, zone: picked.zone, sample: picked.sample, index: i };
+      if (!picked) continue;
+
+      found.push({ kg: kg, zone: picked.zone, sample: picked.sample, index: i, gain: 1 });
+      ranges.push({ low: lo, high: hi });
     }
-    return null;
+
+    // Program header byte 21. Read here rather than carried on the parsed program, because
+    // the editor pokes the byte straight into the file and a cached copy would go stale the
+    // moment somebody ticked the box.
+    var head = sel.disk.readFile(sel.entry);
+    var fade = !!(head && head.length > 21 && head[21] !== 0);
+
+    var gains = AkaiAudio.crossfadeGains(note, ranges, fade);
+    for (var g = 0; g < found.length; g++) found[g].gain = gains[g];
+
+    return found;
+  }
+
+  /** Let go of every voice sounding a MIDI note - there may be one per keygroup. */
+  function releaseNote(note) {
+    var prefix = 'midi:' + note + ':';
+    Object.keys(voices).forEach(function (k) {
+      if (k === 'midi:' + note || k.indexOf(prefix) === 0) releaseVoice(k);
+    });
   }
 
   // A note that cannot sound has to say why. There are three quite different reasons -
@@ -2260,20 +2302,26 @@
       return;
     }
 
-    var v = voiceFor(note, velocity);
-    if (!v) {
+    var vs = voicesFor(note, velocity);
+    if (!vs.length) {
       say('MIDI ' + name + ' arrived, but no keygroup in ' + sel.entry.name.trim() +
           ' covers it. ' + keyRangeOf(sel.entry));
       return;
     }
 
-    play(sel.disk, v.sample, pitchFor(v.sample, v.kg, v.zone, note),
-         $('useLoop').checked,
-         { kg: v.kg, zone: v.zone, note: note, velocity: velocity },
-         'midi:' + note);
+    var said = [];
+    vs.forEach(function (v) {
+      play(sel.disk, v.sample, pitchFor(v.sample, v.kg, v.zone, note),
+           $('useLoop').checked,
+           { kg: v.kg, zone: v.zone, note: note, velocity: velocity, gain: v.gain },
+           'midi:' + note + ':' + v.index);
 
-    say(name + '  ->  keygroup ' + (v.index + 1) + ', ' + v.sample.name.trim() +
-        '   velocity ' + velocity);
+      said.push('keygroup ' + (v.index + 1) + ', ' + v.sample.name.trim() +
+                (v.gain < 0.999
+                   ? ' at ' + (20 * Math.log10(v.gain)).toFixed(1) + ' dB' : ''));
+    });
+
+    say(name + '  ->  ' + said.join('   +   ') + '   velocity ' + velocity);
   }
 
   /** Which notes a program will actually answer, for when one does not sound. */
@@ -2341,7 +2389,7 @@
 
     // a note-on at velocity 0 is a note-off, which most sequencers send
     if (status === 0x90 && d[2] > 0) midiNoteOn(d[1], d[2]);
-    else if (status === 0x80 || (status === 0x90 && d[2] === 0)) releaseVoice('midi:' + d[1]);
+    else if (status === 0x80 || (status === 0x90 && d[2] === 0)) releaseNote(d[1]);
     else if (status === 0xB0 && d[1] === 1) wheel = d[2];                 // modwheel
     else if (status === 0xE0 && d.length >= 3) {                          // pitch wheel
       pitchWheel = (d[2] << 7) | (d[1] & 0x7F);
