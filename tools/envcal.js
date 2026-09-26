@@ -1804,6 +1804,281 @@ if (sections.release && sections.release.at.length) {
   });
 }
 
+/*
+ * PITCH - what the note is playing, over time.
+ *
+ * New for run 10 and WARP. Every earlier run measured a level or a brightness, because every
+ * parameter until now moved one or the other; warp is described as a pitch envelope, so this
+ * reads the frequency instead.
+ *
+ * WHY ZERO CROSSINGS AND NOT A SPECTRUM
+ *
+ * The rest of this file finds frequencies with Goertzel probes, which is right for a corner
+ * hiding in noise. It is the wrong tool here: resolving a bend of a few cents by scanning
+ * probes needs hundreds of them per window, and a window long enough to separate them is too
+ * long to follow a bend that may be over in a tenth of a second.
+ *
+ * The source is a synthesised sine, so counting its crossings measures the period directly and
+ * costs one pass. Interpolating each crossing to a fraction of a sample puts the resolution
+ * well under a cent over a thirty-millisecond window - far finer than any bend worth modelling.
+ *
+ * Hysteresis, because a 12-bit sine that has been through a filter and a resampler wobbles
+ * around zero: a crossing only counts once the signal has been a quarter of the way up and
+ * then a quarter of the way down, so a wobble cannot add one.
+ */
+function pitchHz(x, rate) {
+  if (!x || x.length < 32) return null;
+
+  var mean = 0, i;
+  for (i = 0; i < x.length; i++) mean += x[i];
+  mean /= x.length;
+
+  var peak = 0;
+  for (i = 0; i < x.length; i++) peak = Math.max(peak, Math.abs(x[i] - mean));
+  if (peak < 1e-6) return null;
+
+  var gate = peak * 0.25;
+  var armed = false, first = null, last = null, crossings = 0;
+
+  for (i = 1; i < x.length; i++) {
+    var a = x[i - 1] - mean, b = x[i] - mean;
+
+    if (b < -gate) armed = true;                       // low enough to count the next rise
+
+    if (armed && a <= 0 && b > 0) {
+      var at = i - 1 + (0 - a) / (b - a);              // the sub-sample instant of the crossing
+      if (first === null) first = at; else { last = at; crossings++; }
+      armed = false;
+    }
+  }
+
+  if (crossings < 2 || last === null) return null;
+  return rate * crossings / (last - first);
+}
+
+if (sections.pitch && sections.pitch.at.length) {
+  console.log('');
+  console.log('PITCH  -  what the note plays, over time');
+
+  var pitchRows = [];
+
+  sections.pitch.at.forEach(function (i) {
+    var c = wanted[i];
+    console.log('');
+    console.log('   ' + c.label);
+
+    /*
+     * Two passes, because the first window has to be short enough not to swallow the event.
+     *
+     * Run 10 traced at 30 ms and every bend peaked in its very first window - so what it
+     * reported as the depth was the average over the first 30 ms of something already
+     * decaying, and it read 250 cents where a finer pass read 314. A window cannot measure
+     * anything that is over in two of them.
+     *
+     * The coarse pass exists only to find the settled pitch, which fixes how short the fine
+     * window can be: a period counter needs whole cycles, so eight of them is the floor. At
+     * 1000 Hz that is 8 ms, at 500 Hz 16 - which is the right trade made automatically rather
+     * than a constant that happens to suit one tone.
+     */
+    /*
+     * A window that is mostly silence has no pitch, and must not be asked for one.
+     *
+     * The first window of a clip can straddle the moment the note starts. Its crossings are
+     * then part transient and part nothing, and the counter obligingly returns a number - on
+     * the shorter windows this run needs, that number came back as a 32-semitone leap on
+     * clips that are flat, and one bogus first point is enough to wreck an exponential fit
+     * (one read 895% off the curve).
+     *
+     * So a window has to carry a real share of the note's own level before its pitch counts.
+     * The threshold is a third of the settled rms, which no sustained tone drops below and
+     * no half-empty window reaches.
+     */
+    var floorRms = null;
+
+    function traceAt(win, hop, until) {
+      var out = [];
+      for (var t = 0; t + win < until; t += hop) {
+        var span = during(i, t, t + win);
+        if (span === null) break;
+        if (floorRms !== null && rms (span) < floorRms) continue;
+        var hz = pitchHz(span, smp.sampleRate);
+        if (hz !== null) out.push({ t: t + win / 2, hz: hz });
+      }
+      return out;
+    }
+
+    var until = c.hold - 0.05;
+    var coarse = traceAt(0.03, 0.01, until);
+
+    if (coarse.length < 10) { console.log('      too little of the note to read a pitch'); return; }
+
+    var restHz = coarse.slice(Math.floor(coarse.length * 2 / 3))
+                       .map(function (p) { return p.hz; })
+                       .sort(function (a, b) { return a - b; });
+    var approx = restHz[Math.floor(restHz.length / 2)];
+
+    var win = Math.max(0.006, 8 / approx);
+
+    // the note's own settled level, taken over its last third - see traceAt
+    var steady = during(i, until * 2 / 3, until);
+    if (steady !== null) floorRms = rms (steady) / 3;
+
+    var trace = traceAt(win, win / 4, until);
+
+    if (trace.length < 10) { console.log('      too little of the note to read a pitch'); return; }
+
+    /*
+     * The settled pitch is the median of the last third, and everything is quoted against it.
+     *
+     * A sample played through a sampler does not have to sit exactly on its nominal frequency
+     * - the rate is whatever the machine's clock divides to - so the absolute hertz mean
+     * nothing. What the bend is, is the DIFFERENCE from where the note ends up, which is also
+     * why section F can compare three notes two octaves apart.
+     */
+    var tail = trace.slice(Math.floor(trace.length * 2 / 3))
+                    .map(function (p) { return p.hz; })
+                    .sort(function (a, b) { return a - b; });
+    var settled = tail[Math.floor(tail.length / 2)];
+
+    var cents = trace.map(function (p) {
+      return { t: p.t, c: 1200 * Math.log2(p.hz / settled) };
+    });
+
+    var worst = cents[0], wobble = 0;
+    cents.forEach(function (p) { if (Math.abs(p.c) > Math.abs(worst.c)) worst = p; });
+    tail.forEach(function (hz) {
+      wobble = Math.max(wobble, Math.abs(1200 * Math.log2(hz / settled)));
+    });
+
+    console.log('      settles at ' + settled.toFixed(1) + ' Hz, steady to ' +
+                wobble.toFixed(1) + ' cents');
+
+    /*
+     * The trace, for every clip rather than only the ones that bend.
+     *
+     * It used to print inside the "this bends" branch, which meant a clip the analysis called
+     * flat showed one number and nothing else. That is fine while the only question is how
+     * far a bend goes, and useless the moment the question is what the pitch DOES - run 13's
+     * direction clips step from 500 Hz to 1500 and back, and both the normal and the reversed
+     * one settle at 1500, so the summary line cannot tell them apart and the trace can.
+     *
+     * In hertz, because a clip that steps between two pitches has no single reference for
+     * cents to be relative to, and because reading 500 and 1500 is easier than reading 0 and
+     * 1902 and working out which way round they went.
+     */
+    var line = [];
+    for (var s = 0; s < trace.length && line.length < 14;
+         s += Math.max(1, Math.ceil(trace.length / 14)))
+      line.push(trace[s].t.toFixed(2) + 's:' + trace[s].hz.toFixed(0));
+    console.log('        ' + line.join('  '));
+
+    /*
+     * A bend has to clear the noise floor of the measurement before it is a bend.
+     *
+     * The wobble of the settled tail IS that floor, measured on this very clip, so a peak
+     * inside three times it is reported as flat. A run whose whole first question is "does
+     * the pitch move at all" must not answer yes to its own measurement error.
+     */
+    if (Math.abs(worst.c) < Math.max(3 * wobble, 5)) {
+      console.log('      FLAT - nothing above the noise (worst ' + worst.c.toFixed(1) +
+                  ' cents at ' + worst.t.toFixed(3) + 's)');
+      pitchRows.push({ label: c.label, setting: c.setting, settled: settled,
+                       depth: 0, took: null, flat: true });
+      return;
+    }
+
+    // how long to come back within a tenth of the peak - the bend's own time constant
+    var back = null;
+    for (var k = 0; k < cents.length; k++)
+      if (cents[k].t > worst.t && Math.abs(cents[k].c) <= Math.abs(worst.c) * 0.1) {
+        back = cents[k].t - worst.t; break;
+      }
+
+    console.log('      BENDS ' + (worst.c > 0 ? 'UP  ' : 'DOWN') + ' ' +
+                Math.abs(worst.c).toFixed(0) + ' cents (' +
+                (worst.c / 100).toFixed(2) + ' semitones) at ' + worst.t.toFixed(3) + 's');
+    console.log('      back within a tenth after ' +
+                (back === null ? 'longer than the note' : back.toFixed(3) + 's'));
+
+    /*
+     * The two numbers a model actually needs: the depth at t=0 and the time constant.
+     *
+     * The peak above is whatever the first window happened to catch, which depends on where
+     * the window lands against the note - useful as a yes/no, useless as a constant. Fitting
+     * a straight line to log|cents| against time gives both, and extrapolates the depth back
+     * to the instant of the strike rather than to the middle of the first window.
+     *
+     * Only points clearly above the clip's own wobble go in; the rest is the noise floor and
+     * would bend the line towards nothing. The worst departure from the fitted line is printed
+     * because it is the check that this IS an exponential - if a bend turns out to have a knee
+     * in it, that number is where it shows up.
+     */
+    /*
+     * Fitted over the top of the bend only, not down into the noise.
+     *
+     * The decay really is exponential - traced against a fitted curve it holds to 2-3% from
+     * full depth down to a tenth of it. Below that the bend is a few cents, the measurement's
+     * own wobble is one or two, and the points stop meaning anything: at 10 cents the trace
+     * read 0.64 of the curve, which is noise, not shape.
+     *
+     * Including that tail is what made the earlier fits report 30% departures from a curve
+     * they actually follow to 3%, and it dragged the extrapolated depth around by a quarter.
+     * So the fit takes points down to a seventh of the peak, which is about two time constants
+     * of data - plenty for a straight line in the log - and always far above the wobble.
+     */
+    var fit = cents.filter(function (p) {
+      return Math.abs(p.c) > Math.max(6 * wobble, Math.abs(worst.c) * 0.15) &&
+             p.t <= worst.t + 1.5;
+    });
+
+    if (fit.length >= 6) {
+      var n = fit.length, sx = 0, sy = 0, sxx = 0, sxy = 0;
+      fit.forEach(function (p) {
+        var y = Math.log(Math.abs(p.c));
+        sx += p.t; sy += y; sxx += p.t * p.t; sxy += p.t * y;
+      });
+      var slope = (n * sxy - sx * sy) / (n * sxx - sx * sx);
+
+      if (slope < 0) {
+        var tau = -1 / slope, at0 = Math.exp((sy - slope * sx) / n);
+        var off = 0;
+        fit.forEach(function (p) {
+          var pred = at0 * Math.exp(-p.t / tau);
+          off = Math.max(off, Math.abs(Math.abs(p.c) - pred) / pred);
+        });
+
+        console.log('      fitted: ' + (worst.c > 0 ? '+' : '-') + at0.toFixed(0) +
+                    ' cents at t=0, time constant ' + (tau * 1000).toFixed(1) + ' ms' +
+                    '   (worst off the curve ' + (off * 100).toFixed(0) + '%, ' + n + ' points)');
+
+        pitchRows.push({ label: c.label, setting: c.setting, settled: settled,
+                         depth: worst.c, at: worst.t, took: back, flat: false,
+                         at0: (worst.c > 0 ? 1 : -1) * at0, tauMs: tau * 1000, off: off });
+        return;
+      }
+    }
+
+    console.log('      the bend does not decay like an exponential - no time constant fitted');
+
+    var show = [];
+    for (var s = 0; s < cents.length && show.length < 12; s += Math.ceil(cents.length / 12))
+      show.push(cents[s].t.toFixed(2) + 's:' + cents[s].c.toFixed(0));
+    console.log('        ' + show.join('  '));
+
+    pitchRows.push({ label: c.label, setting: c.setting, settled: settled,
+                     depth: worst.c, at: worst.t, took: back, flat: false });
+  });
+
+  var moved = pitchRows.filter(function (r) { return !r.flat; }).length;
+  console.log('');
+  console.log('   ' + moved + ' of ' + pitchRows.length + ' clips bent the pitch.');
+  if (moved === 0)
+    console.log('   WARP IS NOT A PITCH ENVELOPE - whatever it does, it is not this. Look at ' +
+                'level and brightness next.');
+
+  result.pitch = pitchRows;
+}
+
 console.log('');
 
 if (jsonOut) {

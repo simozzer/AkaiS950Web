@@ -794,6 +794,31 @@ var Akai = (function () {
         velToAttack: raw[9],
         velToRelease: (raw[10] << 24) >> 24,
         velToLoudness: raw[11],
+
+        /*
+         * WARP, bytes 12 to 14: a pitch bend at note-on that decays back to the nominal
+         * pitch. 98 keygroups of 1908 use it. See CAL.WARP_TIME in audio.js for what each
+         * one does and how it was measured.
+         *
+         * Byte 13 is the DEPTH and is signed; byte 12 is how far velocity scales that depth,
+         * with 0 meaning "not at all, always full"; byte 14 is the time constant. The panel
+         * calls byte 12 "warp velocity", which reads like the depth and is not.
+         */
+        warpVelocity: raw[12],
+        warpDepth: (raw[13] << 24) >> 24,
+        warpTime: raw[14],
+
+        /*
+         * Byte 19: which output the keygroup goes to. The panel value, which the byte stores
+         * one lower - so ALL is -1, the default in 1617 of the 1908 library keygroups.
+         *
+         *     0 ALL,  1..8 MONO 1 to 8,  9 LEFT,  10 RIGHT
+         *
+         * LEFT and RIGHT are two mono sockets rather than a pan pot: a keygroup sent to one
+         * is absent from the other. TUBULAR 2 reads L L L L R R R R, PIZ-CHORUS one each side.
+         */
+        outputPort: ((raw[19] << 24) >> 24) + 1,
+
         lfoDelay: raw[15], lfoRate: raw[16], lfoDepth: raw[17],
 
         // How far the wheel and aftertouch may add to that depth. Byte 22 defaults to 50
@@ -1151,6 +1176,72 @@ var Akai = (function () {
 
     var now = this.entryAt(e.slot) || e;
     return mode ? this.setLoopMode(now, mode) : now;
+  };
+
+  /**
+   * The sample page's TIME DIRECTION: 'N' normal or 'R' reverse, header byte 0x2B.
+   *
+   * IT IS A DESTRUCTIVE EDIT, NOT A PLAYBACK FLAG. That is measured, not assumed: a sample
+   * whose data is written forwards, with 0x2B set to 'R', plays forwards on the hardware -
+   * one-shot and looping alike, tested with a struck note that falls 52 dB in half a second
+   * and would climb those 52 dB if anything reversed it. So the panel must rewrite the audio
+   * backwards and keep 0x2B as a record of what it did, and this does the same.
+   *
+   * Which is why setting the byte on its own would be worse than useless: it would mark a
+   * sample as reversed while it went on playing forwards, and the next person to look would
+   * have a disk that contradicts itself.
+   *
+   * THE LOOP POINTS MOVE WITH THE AUDIO, AND THAT PART IS A CHOICE.
+   *
+   * The reversal itself is measured. What the machine does to a loop when it reverses is not,
+   * and the library cannot say: loopEnd equals the sample length in only 78% of the 1110
+   * samples, so there is no invariant to appeal to, and PHONE 3 - the one reversed sample
+   * there is - has a loop that was almost certainly set after it was reversed.
+   *
+   * So the loop is mapped so that it covers the SAME AUDIO, backwards. Leaving the frame
+   * numbers alone would point a sustained sample's loop at what used to be its attack, which
+   * is a different sound and usually a clicking one. Reversing twice restores everything
+   * either way; this way the sound in between is the one the loop was chosen for.
+   *
+   * One save on the hardware would settle it: give a sample a loop that does not reach the
+   * end, reverse it on the panel, and read the three loop fields back.
+   */
+  Disk.prototype.setSampleDirection = function (e, direction) {
+    if (direction !== 'N' && direction !== 'R')
+      throw new Error('a time direction is N or R, not ' + JSON.stringify(direction));
+
+    if ((e.loopDirection || 'N') === direction) return e;
+
+    var w = this.sampleWords12(e);
+    var n = w.length;
+    if (n < 2) throw new Error('there is no audio to reverse');
+
+    var back = new Int16Array(n);
+    for (var i = 0; i < n; i++) back[i] = w[n - 1 - i];
+
+    /*
+     * A frame at i becomes n-1-i, so a region [a, b) becomes [n-b, n-a). The length is
+     * unchanged, and the start is written explicitly rather than left at 0, because after a
+     * reversal the loop generally no longer runs to the end of the sample - which is what
+     * a start of 0 would imply.
+     */
+    var end = e.loopEnd, len = e.loopLength;
+    var from = Math.max(e.loopStart, end - len);
+    var newEnd = end, newStart = e.loopStart;
+
+    if (len > 0 && end > 0 && end <= n && from < end) {
+      newEnd = n - from;
+      newStart = n - end;
+    }
+
+    this.rewriteSample(e, back, n, e.sampleRate, newEnd, newStart, len);
+
+    var now = this.entryAt(e.slot) || e;
+    this.pokeFile(now, 0x2B, direction.charCodeAt(0));
+
+    this.modified = true;
+    this.parseDirectory();
+    return this.entryAt(e.slot) || now;
   };
 
   Disk.prototype.setSampleRate = function (e, sampleRate) {

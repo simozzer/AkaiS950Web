@@ -26,6 +26,22 @@
  served over http or https - Web MIDI is refused on a file:// page.">
       <select id="midiIn"><option value="">MIDI in: off</option></select>
       <select id="midiCh" title="Which MIDI channel to listen on"></select>
+      <!-- The machine's MIDI page has this, 1 to 12 semitones. It belongs to the machine
+           rather than to a programme, so there is nothing on a disk to read it from. -->
+      <select id="bendRange" title="How far the pitch wheel bends, as on the machine's MIDI page">
+        <option value="1">Bend 1</option>
+        <option value="2" selected>Bend 2</option>
+        <option value="3">Bend 3</option>
+        <option value="4">Bend 4</option>
+        <option value="5">Bend 5</option>
+        <option value="6">Bend 6</option>
+        <option value="7">Bend 7</option>
+        <option value="8">Bend 8</option>
+        <option value="9">Bend 9</option>
+        <option value="10">Bend 10</option>
+        <option value="11">Bend 11</option>
+        <option value="12">Bend 12</option>
+      </select>
     </label>
     <span id="status">Drop .hfe or .img files anywhere, or use Open.</span>
     <!-- The source bundle, not a disk image — kept at the far right so it cannot be

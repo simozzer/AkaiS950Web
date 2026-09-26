@@ -590,13 +590,39 @@ var AkaiAudio = (function () {
      * How many units a tick, by stored byte. The measured points are exact; between them n is
      * interpolated and rounded, so each whole number gets its own stretch of the range.
      *
-     * Below stored 30 nothing is measured. The entry at 0 is the count that crosses
-     * VCA_ATTACK_GATE, so stored 0 and 1 are steps and the ramp climbs from about a
-     * millisecond at 2 to the measured 0.209 s at 30. That shape is a guess; that the two
-     * ends of it are a gate and 0.209 s is not.
+     * TWO OF THESE WERE MEASURED SIDEWAYS, THROUGH VELOCITY
+     *
+     * The stretch below stored 30 used to be a single guessed entry - 7000 at stored 0,
+     * interpolated the whole way to the measured 26 at stored 30. Nothing could reach into
+     * it, because no run ever set an attack byte that low.
+     *
+     * Run 7 reached it from the side. Velocity to attack turned out to be a plain subtraction
+     * from the attack byte (see velocityAttackByte), so a base of 70 struck hard enough lands
+     * wherever you like: velocity 64 at full depth puts it at stored 20.1 and velocity 80 at
+     * stored 7.6. Those two clips are the first measurements of this stretch, and they say
+     * the guess was out by 3x and 6x:
+     *
+     *     stored        7.6    20.1
+     *     measured n    270      55
+     *     the guess    1684     164
+     *
+     * They are entered at 8 and 20, which is where they fall to the nearest byte.
+     *
+     * This leans on the velocity rule being right, which is fair: that rule is confirmed
+     * against seven clips in the region where this table IS measured, every one of them
+     * within a single counter step. But it is a rung below the rest of the table, and the
+     * stored 7.6 point is the weakest thing here - 0.020 s is near the floor of what the
+     * analysis can time, and an error there is large in n.
+     *
+     * Stored 0 is still the gate rather than a measurement. Extrapolating the two new points
+     * downwards puts stored 0 at about 7.6 ms, which is the first evidence that ever bore on
+     * it and is not enough to overturn how envelope generators are built. The entry at 0 is
+     * kept as the count that crosses VCA_ATTACK_GATE, so stored 0 and 1 are steps; what the
+     * new points change is that the climb out of the gate is now anchored at 8 and 20 instead
+     * of running unguided all the way to 30.
      */
     VCA_ATTACK_STEPS: [
-      [0, 7000], [30, 26], [40, 15], [50, 9], [55, 7], [60, 6], [65, 5],
+      [0, 7000], [8, 270], [20, 55], [30, 26], [40, 15], [50, 9], [55, 7], [60, 6], [65, 5],
       [70, 4], [75, 4], [80, 3], [85, 3], [90, 2], [95, 2], [99, 2]
     ],
 
@@ -627,6 +653,102 @@ var AkaiAudio = (function () {
      * the two rules agree, and every earlier release measurement was taken there.
      */
     RELEASE_IS_A_RATE: true,
+
+    /*
+     * HOW FAR THE VCA RELEASE FALLS IN ONE RELEASE TIME: 40 dB.
+     *
+     * Every engine had this at 80 - a release ran the gain down to 1e-4 over envSeconds(byte)
+     * - and nothing had ever checked it, because until run 9 no recording timed a release
+     * against a known byte at more than one setting.
+     *
+     * Run 9 times sixteen releases spanning stored 20 to 95. Divide the 40 dB each one took
+     * by the envelope curve's time for its byte and the span comes out flat:
+     *
+     *     stored        20    44.6    46    70    94    95.4
+     *     implied span  41    50      48    41    40    40  dB
+     *
+     * Twelve of the sixteen sit at 41.0 dB with a spread of 0.7 - across a 200:1 range of
+     * release times. That is not a fit, it is a constant, and it is 40 rather than 80.
+     *
+     * So the envelope curve was right all along and the span was wrong, which is the better
+     * of the two answers: the same curve still serves the attack, the decay and the filter,
+     * and only this one number moves. It is why every release in the model ran at twice the
+     * speed of the machine - 699 ms against 1366 at stored 70 - on every programme, not just
+     * the ones with a velocity depth.
+     *
+     * THE FOUR THAT DO NOT FIT ARE THE CURVE, NOT THE SPAN.
+     *
+     * The clips at stored 44.6 and 46 imply 49.3 dB, and they are the only ones that miss.
+     * They miss in the same direction, by the same amount, and at the same place the
+     * velocity-release fit missed - so ENV_TIME is about 20% slow around stored 45. Left as
+     * it is: one setting off in a nine-point measured table is a thing to re-measure, not to
+     * paper over with a second constant.
+     *
+     * It is a RATE, so this is how far it falls in one release time from wherever the key
+     * came up, not the distance it has to cover before it stops.
+     */
+    VCA_RELEASE_DB: 40,
+
+    /*
+     * WARP - keygroup bytes 12, 13 and 14. A pitch bend at note-on, decaying back to pitch.
+     *
+     *     bend in cents = WARP_CENTS_PER_UNIT * byte13 * scale,  decaying as exp(-t / tau)
+     *
+     *     scale = 1                                 when byte 12 is 0
+     *           = (byte12 / 99) * (velocity / 127)  when byte 12 is above 0
+     *
+     * Measured over runs 10, 11 and 12; the whole model fits 25 clips at 7.3% rms, worst 17%.
+     * 98 of the 1908 keygroups on the real disks use it - drums and percussion mostly, plus a
+     * SAX and two RECORDERs - and until now every engine read the bytes and dropped them.
+     *
+     * BYTE 13 IS THE DEPTH, AND BYTE 12 IS NOT
+     *
+     * The panel calls byte 12 "warp velocity", and run 10 was laid out on the assumption that
+     * this made it the depth. It swept byte 12 with byte 13 at zero, read a flat line eight
+     * times over, and learned nothing. Byte 13 is the depth; byte 12 decides how much velocity
+     * scales it, and ZERO MEANS OFF rather than none - at byte 12 = 0 the bend is full however
+     * gently the key is struck, measured at velocities 1, 32, 64 and 127 as 364, 342, 320 and
+     * 338 cents with no trend. At byte 12 = 99 the same keygroup is flat at velocity 1, bends
+     * 155 cents at 64 and 298 at 127.
+     *
+     * That distinction decides how 22 real keygroups sound - the ones setting byte 13 with
+     * byte 12 left at 0. Reading it the other way would silence their bend at anything below
+     * a hard strike.
+     *
+     * THERE IS NO KEY FOLLOW
+     *
+     * Two published descriptions of Warp call byte 13 a key follow, scaling the decay with
+     * note number. The same keygroup struck at keys 48, 60 and 72 gave time constants of 64.2,
+     * 64.2 and 70.7 ms and depths within 8%. Nothing about the bend tracks the note. The
+     * panel's name for byte 13 - ATTACK OFFSET - survives where theirs does not.
+     */
+
+    /*
+     * Cents per unit of byte 13, at full scale.
+     *
+     * The fit gives 6.21 and cannot separate 6.0 from 6.5 - rms is 9.3%, 7.3% and 7.2% at 6.0,
+     * 6.25 and 6.5. So 6.25 is a CHOICE among values the measurement allows, taken because it
+     * is one sixteenth of a semitone exactly and this machine has form for mechanism-shaped
+     * numbers: the VCA attack turned out to be 5.4/n for whole n. It is not read to that
+     * precision and a better run could move it either way.
+     */
+    WARP_CENTS_PER_UNIT: 6.25,
+
+    /*
+     * The time constant of the bend, by byte 14. Measured, eleven points.
+     *
+     * Nothing like ENV_TIME - it spans 22:1 where that spans 1000:1, and its shape is its own.
+     * Byte 14 = 50 is the mean of eight independent clips reading 68 to 70 ms; byte 14 = 99 is
+     * two clips in different runs reading 749 and 762. The gaps at 30, 40, 60, 70, 90 and 95
+     * were filled deliberately because the curve turns over hardest above 80, and interpolating
+     * through a turn is how ENV_TIME came to be 20% wrong around stored 45.
+     *
+     * 99 is what 1529 of the 1908 real keygroups carry, so 755 ms is the common case.
+     */
+    WARP_TIME: [
+      [0, 0.0343], [20, 0.0432], [30, 0.0483], [40, 0.0577], [50, 0.0695], [60, 0.0862],
+      [70, 0.1128], [80, 0.1596], [90, 0.2760], [95, 0.4327], [99, 0.7555]
+    ],
 
 
     // Sustain is NOT a fraction of the amplitude. A stored 50 measured 19.7 dB down,
@@ -771,6 +893,172 @@ var AkaiAudio = (function () {
     }
 
     return seconds;
+  }
+
+  /**
+   * How far Warp bends the pitch at the moment the key goes down, in cents. See CAL.
+   *
+   * Signed: negative starts flat and rises to pitch, positive starts sharp and falls to it.
+   * Zero when byte 13 is zero, whatever the other two say - a depth of nothing bends nothing,
+   * which is the state of the one real keygroup that sets byte 12 alone.
+   */
+  function warpCents(velToWarp, depth, velocity) {
+    var d = clamp(depth || 0, -50, 50);
+    if (d === 0) return 0;
+
+    var v = clamp(velToWarp || 0, 0, 99);
+    var scale = v === 0 ? 1 : (v / 99) * (clamp(velocity, 0, 127) / 127);
+
+    return CAL.WARP_CENTS_PER_UNIT * d * scale;
+  }
+
+  /** The time constant of the warp bend in seconds, read off CAL.WARP_TIME. */
+  function warpSeconds(stored) {
+    var T = CAL.WARP_TIME;
+    var v = clamp(stored, 0, 99);
+    var seconds = T[T.length - 1][1];
+
+    for (var i = 1; i < T.length; i++) {
+      if (v > T[i][0]) continue;
+      var lo = T[i - 1][1], hi = T[i][1];
+      var span = T[i][0] - T[i - 1][0];
+      var t = span === 0 ? 0 : (v - T[i - 1][0]) / span;
+      seconds = lo * Math.pow(hi / lo, t);        // straight in log time, as the others are
+      break;
+    }
+
+    return seconds;
+  }
+
+  /**
+   * The playback-rate multiplier Warp is applying `t` seconds into a note.
+   *
+   * The bend is exponential - traced against a fitted curve it holds to 2-3% from full depth
+   * down to a tenth of it - so this is the whole shape, and 1.0 once it has decayed away.
+   */
+  /**
+   * The pitch wheel as a multiplier on the playback rate.
+   *
+   * `wheel` is the MIDI value 0..16383, resting at 8192; `range` is the machine's MIDI page
+   * setting in semitones, 1 to 12.
+   *
+   * The two halves are not the same width - 8192 steps below the centre and 8191 above - so
+   * dividing by 8192 both ways leaves a full upward bend one step short of the range.
+   * Inaudible, and the kind of wrong nobody finds later because nobody measures a wheel at
+   * its stop.
+   *
+   * The range belongs to the MACHINE rather than to a programme, so nothing reads it off a
+   * disk: the OVERALL SETTINGS file that would hold it is written only when somebody saves it
+   * deliberately.
+   */
+  function bendRatio(wheel, range) {
+    var w = clamp(wheel, 0, 16383);
+    var off = w - 8192;
+    if (off === 0 || !range) return 1;
+
+    var semis = range * (off >= 0 ? off / 8191 : off / 8192);
+    return Math.pow(2, semis / 12);
+  }
+
+  function warpRatio(kg, velocity, t) {
+    if (!kg || !kg.warpDepth) return 1;
+
+    var cents = warpCents(kg.warpVelocity, kg.warpDepth, velocity);
+    if (cents === 0) return 1;
+
+    return Math.pow(2, (cents * Math.exp(-t / warpSeconds(kg.warpTime))) / 1200);
+  }
+
+  /**
+   * The attack byte a strike of this velocity actually plays - keygroup byte 9 applied.
+   *
+   * MEASURED, run 7. A harder strike makes the attack SHORTER, and it does it by plain
+   * subtraction from the attack byte, before the counter ever sees it:
+   *
+   *     effective = attack - (velocity / 127) * velToAttack        clamped 0..99
+   *
+   * Eleven clips on one disk, a base attack of 70 and depths of 0, 30, 75 and 99. In the
+   * region where VCA_ATTACK_STEPS is itself measured every one lands within a single counter
+   * step, which is all the resolution a counter has:
+   *
+   *     depth  vel   effective byte   measured n   this table
+   *        99    1             69.2          4.0            4
+   *        99   16             57.5          7.0            6
+   *        99   32             45.1         11.0           12
+   *        99   48             32.6         22.0           23
+   *        30  127             40.0         14.1           15
+   *         0    1 / 127       70.0     4.0 / 4.0           4
+   *
+   * TWO THINGS IT IS NOT.
+   *
+   * There is no pivot. Velocity to FILTER turns about 65 - a soft strike goes down where a
+   * hard one goes up - and the obvious guess was that the attack did the same. It does not:
+   * at full depth velocity 1 played 1.344 s against a base of 1.350, so a soft strike leaves
+   * the byte alone. A pivot at 64 would have put velocity 1 at a negative byte, which is to
+   * say gated, and the recording has a second and a third of ramp on it.
+   *
+   * The panel writes this byte one to one. Setting velocity sensitivity for attack to 91 on
+   * the machine and saving put exactly 91 into byte 9 - no scale, no offset - and the same
+   * save put 17 into byte 10 from a panel reading of 17. So the number on the panel IS the
+   * number in the record, and a depth read off a real disk means what it says.
+   *
+   * That is worth stating because a panel reading taken before the flip-and-diff suggested
+   * otherwise: 46 was read off a keygroup this disk stores as 99. The diff is the stronger
+   * evidence - it changes one field at a time and reads the result out of the bytes - and the
+   * measurement agrees with it independently. By velocity 80 the attack is down to 0.020 s, a
+   * shift of some 62 byte units, and a depth of 46 could not shift more than 46 even at full
+   * velocity. Whatever that reading was, it was not this field.
+   */
+  function velocityAttackByte(stored, depth, velocity) {
+    var vel = clamp(velocity, 0, 127);
+    return clamp(stored - (vel / 127) * clamp(depth || 0, 0, 99), 0, 99);
+  }
+
+  /**
+   * The release byte a strike of this velocity plays - keygroup byte 10 and flag 0x10 applied.
+   *
+   * MEASURED, run 9. Unlike the attack, this one PIVOTS, and about velocity 64:
+   *
+   *     effective = release + 2 * velToRelease * (velocity - 64) / 63    clamped 0..99
+   *
+   * Eighteen clips, a base release of 70, depths of +25, -25, +12, -12 and 0, at up to five
+   * velocities each. Time from key-up to 40 dB down:
+   *
+   *     depth    vel 1    vel 32    vel 64    vel 96   vel 127
+   *      +25      42ms     195ms    1349ms    8272ms   11162ms
+   *      -25   11093ms    8325ms    1354ms     194ms      41ms
+   *      +12     224ms         -    1365ms         -    6994ms
+   *      -12    7081ms         -    1337ms         -     219ms
+   *        0    1366ms         -         -         -    1354ms
+   *
+   * Four things fall out of that and each was an open question:
+   *
+   *   THE PIVOT is 64. Every clip at velocity 64 lands on the depth-0 value to within 15 ms,
+   *   whatever the depth. Fitting the pivot as a free parameter gives 64 exactly; 60 and 68
+   *   are both clearly worse.
+   *   THE SIGN simply negates. Read the -25 row backwards against the +25 row read forwards:
+   *   41/42, 194/195, 1354/1349, 8325/8272. That is a mirror, not an approximation.
+   *   THE DEPTH is linear. 12 gives half the slope of 25, to 2%.
+   *   THE MULTIPLIER is 2, not 1. A depth of 25 swings the effective byte from 20 to 99, not
+   *   from 45 to 95. Fitted freely it comes out at 2.05, and 1.5 or 2.5 are far worse.
+   *
+   * The control passes: depth 0 reads 1366 ms at velocity 1 and 1354 ms at 127, so the enable
+   * bit on its own does nothing to the release.
+   *
+   * WITH THE SWITCH OFF, EVERY NOTE IS PLAYED AS THOUGH ITS VELOCITY WERE 1.
+   *
+   * That is measured rather than assumed, and it is the whole reason this parameter looked
+   * inert for two runs. Run 7 had bit 0x10 clear on every keygroup - as do all 1908 keygroups
+   * in the real library - and read the same release at velocity 1 and at velocity 127 for
+   * depths of -50, 0 and +50. Those readings are exactly what this rule gives at velocity 1:
+   * a depth of -50 clamps to 99 and takes eleven seconds, +50 clamps to 0 and is instant.
+   *
+   * Only the two extremes were tried with the switch off, so "treated as velocity 1" is the
+   * simplest thing that fits rather than the only thing that could.
+   */
+  function velocityReleaseByte(stored, depth, velocity, switchOn) {
+    var vel = switchOn ? clamp(velocity, 0, 127) : 1;
+    return clamp(stored + 2 * (depth || 0) * (vel - 64) / 63, 0, 99);
   }
 
   /**
@@ -1087,10 +1375,11 @@ var AkaiAudio = (function () {
     var sustainDb = -(1 - clamp(kg.vca[2], 0, 99) / 99) * CAL.SUSTAIN_DB;
 
     return {
-      attack: vcaAttackSeconds(kg.vca[0]),
+      attack: vcaAttackSeconds(velocityAttackByte(kg.vca[0], kg.velToAttack, vel)),
       decay: envSeconds(kg.vca[1]),
       sustain: dbToGain(sustainDb),
-      release: envSeconds(kg.vca[3]),
+      release: envSeconds(velocityReleaseByte(kg.vca[3], kg.velToRelease, vel,
+                                              kg.velocityReleaseSwitch)),
       peak: clamp(dbToGain(velDb + zoneDb), 0, 4)
     };
   }
@@ -1115,6 +1404,12 @@ var AkaiAudio = (function () {
     cutoffHz: cutoffHz,
     envSeconds: envSeconds,
     vcaAttackSeconds: vcaAttackSeconds,
+    velocityAttackByte: velocityAttackByte,
+    warpCents: warpCents,
+    warpSeconds: warpSeconds,
+    warpRatio: warpRatio,
+    bendRatio: bendRatio,
+    velocityReleaseByte: velocityReleaseByte,
     butterworth: butterworth,
     filterWords: filterWords,
     vcfEnvelope: vcfEnvelope,

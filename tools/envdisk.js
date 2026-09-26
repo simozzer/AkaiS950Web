@@ -117,7 +117,92 @@ function samplesFor(plan) {
   return [{ name: SAMPLE, kind: 'noise' }];
 }
 
+/*
+ * A sawtooth of a given period in FRAMES, for measuring what a loop does with its own ends.
+ *
+ * Deliberately asymmetric, which is the whole point. A loop that alternates plays its frames
+ * forward and then backward, and a symmetric waveform reversed is the same waveform - so a
+ * sine would sound identical either way and measure nothing. A ramp reversed is the other
+ * ramp, and a loop that alternates therefore turns a sawtooth into a TRIANGLE at half the
+ * frequency, which the pitch analysis reads off in one number:
+ *
+ *     forward only                    saw       at rate / period
+ *     alternating, ends repeated      triangle  at rate / (2 * period)
+ *     alternating, ends played once   triangle  at rate / (2 * period - 2)
+ *
+ * The period is in frames rather than hertz because the question is about frame counts: two
+ * frames in a loop of twenty is a tenth of the pitch, and stating it as a frequency would
+ * round the very thing being measured.
+ */
+function ramp(count, period) {
+  var words = new Int16Array(count);
+  var p = Math.max(2, Math.round(period));
+
+  for (var i = 0; i < count; i++) {
+    // -PEAK at the first frame of each period, climbing to nearly +PEAK at the last
+    var phase = (i % p) / p;
+    words[i] = Math.round((phase * 2 - 1) * PEAK);
+  }
+
+  return words;
+}
+
+/*
+ * Two tones, one after the other, for telling forwards from backwards.
+ *
+ * Reverse playback cannot be measured with a ramp or a sine: a sawtooth played backwards is
+ * the mirrored sawtooth and a sine is a sine, and both have exactly the period they started
+ * with. What a reversal changes is the ORDER of things, so the source has to have an order -
+ * low then high, which the pitch trace reads as a step up or a step down and nothing else can
+ * be mistaken for.
+ *
+ * Whole cycles in each half, so neither the join in the middle nor the loop back to the start
+ * puts a click where a measurement is being taken.
+ */
+function twoTone(count, lowHz, highHz) {
+  var half = Math.floor(count / 2);
+  var words = new Int16Array(count);
+
+  [[0, half, lowHz], [half, count, highHz]].forEach(function (part) {
+    var from = part[0], to = part[1], n = to - from;
+    var cycles = Math.max(1, Math.round(n * part[2] / RATE));
+
+    for (var i = 0; i < n; i++)
+      words[from + i] = Math.round(Math.sin(2 * Math.PI * cycles * i / n) * PEAK);
+  });
+
+  return words;
+}
+
+/*
+ * A struck note: a tone under a sharp attack and a long decay.
+ *
+ * The one source that tells forwards from backwards without any argument. A reversal changes
+ * the ORDER of things, and the strongest order a real sample has is its own envelope - played
+ * as recorded this hits and fades, played backwards it swells and stops dead. That is how a
+ * reversed cymbal sounds and it is what the level trace reads straight off.
+ *
+ * Run 13 asked the same question with two sustained tones at a flat level and learned less
+ * than it should have: a flat sample has no envelope to reverse, which threw away the best
+ * detector there is before the recording started.
+ */
+function perc(count, hz, tau) {
+  var words = new Int16Array(count);
+  var t = Math.max(0.005, tau || 0.08);
+  var cycles = Math.max(1, Math.round(count * hz / RATE));
+
+  for (var i = 0; i < count; i++) {
+    var env = Math.exp(-(i / RATE) / t);
+    words[i] = Math.round(Math.sin(2 * Math.PI * cycles * i / count) * env * PEAK);
+  }
+
+  return words;
+}
+
 function wordsFor(spec, count) {
+  if (spec.kind === 'ramp')    return ramp(count, spec.period || 50);
+  if (spec.kind === 'twotone') return twoTone(count, spec.lowHz || 500, spec.highHz || 1500);
+  if (spec.kind === 'perc')    return perc(count, spec.hz || 1000, spec.tau);
   return spec.kind === 'tone' ? tone(count, spec.hz || 1000, RATE) : noise(count);
 }
 
@@ -156,19 +241,65 @@ function buildDisk(name, log) {
    * last as long as the key is held, so the envelope can be slow enough to read properly.
    */
   specs.forEach(function (spec) {
-    var words = wordsFor(spec, count);
-    disk.addSample(spec.name, words, RATE, 60, 0, plan.LOOPING ? 'L' : 'O');
-    say('  ' + spec.name + ': ' + (spec.kind === 'tone'
-          ? (spec.hz || 1000) + ' Hz tone' : 'white noise from a fixed seed'));
+    /*
+     * A sample may ask for its own length.
+     *
+     * The default is three seconds, which is what a run needs when the sample IS the sound
+     * being measured and a note has to last. Run 13 measures what the LOOP does, so all it
+     * needs is enough sample to hold one, and six three-second samples do not fit on a floppy
+     * - the first one alone wanted 194 blocks of the 200 there are.
+     */
+    var words = wordsFor(spec, spec.frames || count);
 
-    if (plan.LOOPING) {
-      // the whole sample is the loop: the machine plays end-length..end, so an end of n and
-      // a length of n is every word of it, round and round
-      var e = null;
-      disk.entries.forEach(function (x) {
-        if (x.type === 'S' && x.name.trim().toUpperCase() === spec.name.toUpperCase()) e = x;
-      });
-      if (e) disk.setLoop(e, words.length, words.length, 'L');
+    /*
+     * A sample may name its own loop mode and length, or take the plan's.
+     *
+     * Every run up to the twelfth wanted one thing of its loops - that a note last as long as
+     * the key is held - so plan.LOOPING said 'L' or 'O' for all of them and the loop was the
+     * whole sample. Run 13 asks what the loop DOES, which needs 'A' on some samples and not
+     * others, and a loop of twenty frames inside a sample of a hundred thousand.
+     *
+     * So spec.loopMode and spec.loopLength win where they are given, and where they are not
+     * the old behaviour is exactly what happens.
+     */
+    var mode = spec.loopMode || (plan.LOOPING ? 'L' : 'O');
+    var loopLen = spec.loopLength || words.length;
+
+    disk.addSample(spec.name, words, RATE, 60, 0, mode);
+
+    say('  ' + spec.name + ': ' +
+        (spec.kind === 'tone'    ? (spec.hz || 1000) + ' Hz tone'
+       : spec.kind === 'ramp'    ? 'sawtooth, ' + (spec.period || 50) + ' frames a cycle'
+       : spec.kind === 'twotone' ? (spec.lowHz || 500) + ' Hz then ' +
+                                   (spec.highHz || 1500) + ' Hz'
+       : spec.kind === 'perc'    ? (spec.hz || 1000) + ' Hz struck, decaying over ' +
+                                   ((spec.tau || 0.08) * 1000).toFixed(0) + ' ms'
+       :                           'white noise from a fixed seed') +
+        (mode === 'O' ? '' : '   loop ' + loopLen + ' frames, ' +
+          (mode === 'A' ? 'ALTERNATING' : 'forward')));
+
+    var entry = null;
+    disk.entries.forEach(function (x) {
+      if (x.type === 'S' && x.name.trim().toUpperCase() === spec.name.toUpperCase()) entry = x;
+    });
+
+    if (mode !== 'O' && entry) {
+      // the machine plays end-length..end, so an end of n with a length of n is the whole
+      // sample round and round, and a shorter length is the tail of it
+      disk.setLoop(entry, words.length, loopLen, mode);
+    }
+
+    /*
+     * Time direction, header byte 0x2B: 'N' normal, 'R' reverse.
+     *
+     * addSample writes 'N' and has no way to say otherwise, which was right while nothing
+     * needed the other one - exactly one sample in the 1110 on the real disks is 'R'. Poked
+     * here rather than threaded through addSample's arguments, because it is a single byte
+     * of an otherwise finished header and the list of arguments is long enough.
+     */
+    if (spec.direction === 'R' && entry) {
+      disk.pokeFile(entry, 0x2B, 'R'.charCodeAt(0));
+      say('    played in REVERSE');
     }
   });
 

@@ -12,14 +12,17 @@
  * a change at an offset with no name against it.
  *
  * This is how the positional crossfade and key-to-loudness fields were pinned down, done by
- * hand at the time. The velocity page's ON/OFF next to Release is the next one, and the
- * keygroup record still has thirteen bytes and five flag bits with no known meaning:
+ * hand at the time, and how bit 0x10 of the flags was found - the velocity page's ON/OFF next
+ * to Release. The keygroup record still has thirteen bytes and four flag bits with no known
+ * meaning:
  *
  *     bytes  12, 13, 14, 19, 20, 38, 39, 56, 57, 58, 59, 60, 61
- *     bits   0x02, 0x10, 0x20, 0x40, 0x80 of byte 18
+ *     bits   0x02, 0x20, 0x40, 0x80 of byte 18
  *
- * An on/off is one bit or one byte, so it is almost certainly among those - and the three
- * sitting directly after the velocity block, 12 to 14, are the first place to look.
+ * It also settled what the velocity bytes are worth. One save carrying three panel changes -
+ * velocity attack 91, velocity release 17, ON/OFF on - put 91 in byte 9, 17 in byte 10 and set
+ * bit 0x10, and moved nothing else. So those two are written one to one: the number on the
+ * panel is the number in the record.
  */
 var fs = require('fs');
 var path = require('path');
@@ -90,7 +93,23 @@ var KG_MAP = keygroupMap();
 var PROG_HEADER = 38, KEYGROUP = 70;
 
 /// The eight bits of a byte, named where the meaning is known.
-var FLAG_BITS = { 0x01: 'constant pitch', 0x04: 'LFO desync', 0x08: 'one-shot' };
+var FLAG_BITS = {
+  0x01: 'constant pitch', 0x04: 'LFO desync', 0x08: 'one-shot',
+
+  /*
+   * Found by this tool, then confirmed by it a second time.
+   *
+   * The first save flipped it alone and named the bit. The second set it as one of three
+   * changes - velocity attack 91, velocity release 17, and this OFF -> ON - and only this bit
+   * moved in byte 18, so the pairing is not a coincidence of one save.
+   *
+   * What it DOES is still open. Run 7 measured byte 10 with this clear, and the byte shifted
+   * the release a great deal while ignoring velocity entirely. The obvious reading is that
+   * this switch is what makes byte 10 follow the strike at all, which would make run 7 a
+   * measurement of the parameter with its own switch off.
+   */
+  0x10: 'the velocity page ON/OFF, next to Release'
+};
 
 function bitsChanged(before, after) {
   var out = [];

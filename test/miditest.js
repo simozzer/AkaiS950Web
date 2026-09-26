@@ -5,16 +5,35 @@
  * available here are quiet ones: a variable-length quantity encoded wrongly shifts every
  * later event, a missing note-off leaves a note hanging, a program change after its note
  * tests the wrong programme. So this parses the bytes independently of the writer and
- * compares the result against benchplan.js.
+ * compares the result against the plan.
  *
  *   node miditest.js [file.mid]
+ *   node miditest.js run9.mid --plan envplan9.js
+ *
+ * --plan takes the same form here as it does in envdisk, envmidi, envcal and envrender.
+ * Without it this checks benchplan.js, which is what the bare invocation has always meant.
+ *
+ * It used to ignore the flag rather than reject it, which is the worse of the two failures:
+ * a run-9 file checked against benchplan reported eighteen wrong notes, eighteen wrong
+ * velocities and a missing four, all of them saying nothing except that two different plans
+ * are different. The generic checks passed throughout and looked like reassurance.
  */
 var fs = require('fs');
 var path = require('path');
-var plan = require('../tools/benchplan.js');
+
+var args = process.argv.slice(2);
+var planFile = '../tools/benchplan.js';
+for (var ai = 0; ai < args.length; ai++) {
+  if (args[ai] === '--plan') {
+    planFile = '../tools/' + args[ai + 1].split(/[\\/]/).pop();
+    args.splice(ai, 2);
+    break;
+  }
+}
+var plan = require(planFile);
 
 // written by tools/makemidi.js, and kept beside it
-var file = process.argv[2] || path.join(__dirname, '..', 'tools', 'AkaiCalibration.mid');
+var file = args[0] || path.join(__dirname, '..', 'tools', 'AkaiCalibration.mid');
 var problems = [];
 
 function check(name, ok, detail) {

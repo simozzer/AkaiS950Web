@@ -440,8 +440,21 @@
     choice('Loop', [['O', 'one-shot'], ['L', 'looping'], ['A', 'alternating']], e.loopMode,
            function (v) { d.setLoopMode(cur(), v); });
 
-    choice('Dir', [['N', 'normal'], ['R', 'reverse']], e.loopDirection,
-           function (v) { d.pokeFile(cur(), 0x2B, v.charCodeAt(0)); });
+    /*
+     * Also not a poke, and this one used to be.
+     *
+     * Time direction is a DESTRUCTIVE edit on the machine - measured: a sample written
+     * forwards with 0x2B set to 'R' plays forwards, one-shot or looping. So the panel must
+     * rewrite the audio backwards and keep the byte as a record, and poking the byte on its
+     * own marked a sample as reversed while it went on playing forwards. A disk that
+     * contradicts itself, from a one-line control that looked harmless.
+     *
+     * setSampleDirection reverses the audio, moves the loop to cover the same sound, and
+     * writes the byte - and does nothing at all if the direction is already what was asked
+     * for, so opening the panel and closing it cannot reverse anything by accident.
+     */
+    choice('Dir', [['N', 'normal'], ['R', 'reverse (rewrites the audio)']], e.loopDirection,
+           function (v) { d.setSampleDirection(cur(), v); });
 
     $('smpWrap').hidden = false;
   }
@@ -1464,16 +1477,33 @@
           g.gain.setValueAtTime(level > 1e-4 ? level : 1e-4, t);
         }
 
-        // an exponential ramp cannot start from zero, and cannot reach it either
-        g.gain.exponentialRampToValueAtTime(1e-4, t + v.release);
-        g.gain.setValueAtTime(0, t + v.release + 0.001);
+        /*
+         * An exponential ramp cannot start from zero, and cannot reach it either - so it is
+         * aimed at 1e-4 and cut to silence just after.
+         *
+         * The TIME to get there is worked out from the rate, not taken as the release itself.
+         * The release byte sets how fast the level falls - CAL.VCA_RELEASE_DB in one release
+         * time, measured - so how long the note takes to die depends on how loud it was when
+         * the key came up. Ramping to 1e-4 over exactly v.release made a quiet note fade at
+         * the same wall-clock speed as a loud one, and made every release twice as fast as
+         * the machine's into the bargain.
+         */
+        var fallDb = 20 * Math.log10(Math.max(level, 1e-4) / 1e-4);
+        var fallFor = v.release * fallDb / AkaiAudio.CAL.VCA_RELEASE_DB;
+
+        g.gain.exponentialRampToValueAtTime(1e-4, t + fallFor);
+        g.gain.setValueAtTime(0, t + fallFor + 0.001);
 
         // The filter closes as the note dies, which needs the tail rendering now - see
         // spliceReleaseTail. If there is nothing to splice the buffer plays on as it was.
         var spliced = spliceReleaseTail(v, g, t);
 
-        if (src) src.stop(spliced ? t : t + v.release + 0.02);
-        if (v.osc) v.osc.stop(t + v.release + 0.02);
+        // fallFor, not v.release - the gain ramp now runs for as long as the RATE needs,
+        // which is longer than one release time for anything above -40 dB. Stopping the
+        // source at v.release would chop the tail off exactly where the old, twice-too-fast
+        // release used to end.
+        if (src) src.stop(spliced ? t : t + fallFor + 0.02);
+        if (v.osc) v.osc.stop(t + fallFor + 0.02);
       } catch (e) {
         try { if (src) src.stop(); } catch (e2) { /* already finished */ }
         try { if (v.osc) v.osc.stop(); } catch (e3) { /* already finished */ }
@@ -1538,6 +1568,31 @@
     return shared[at].osc;
   }
 
+  /*
+   * A panner for a keygroup sent to LEFT or RIGHT, or null for everything else.
+   *
+   * Byte 19 is the output port: 0 ALL, 1..8 the individual mono sockets, 9 LEFT, 10 RIGHT.
+   * 38 keygroups across four library programmes use LEFT or RIGHT and came out dead centre
+   * here until now - TUBULAR 2 spreads its bells L L L L R R R R.
+   *
+   * Hard, not a pan law: those are two mono sockets on the back of the machine, so a keygroup
+   * sent to one is absent from the other. MONO 1..8 stay centred, which is a placeholder and
+   * not a measurement - what the main pair does with a voice routed to an individual output is
+   * a question about hardware that no disk answers. Centring is what this always did.
+   *
+   * Returns null rather than a centred panner so that every other note keeps the graph it had.
+   */
+  function panFor(kg) {
+    if (!kg || !audio) return null;
+    if (kg.outputPort !== 9 && kg.outputPort !== 10) return null;
+    if (!audio.createStereoPanner) return null;         // older WebKit
+
+    var p = audio.createStereoPanner();
+    p.pan.value = kg.outputPort === 9 ? -1 : 1;
+    p.connect(out());
+    return p;
+  }
+
   function play(d, e, semitones, honourLoop, vcf, key, loopOver) {
     key = key === undefined ? 'preview' : key;
     var words = wordsOf(d, e);
@@ -1577,9 +1632,50 @@
     var lp = loopOver || (e.loopMode !== 'O' && e.loopLength > 0
       ? { from: Math.max(e.loopStart, e.loopEnd - e.loopLength), end: e.loopEnd } : null);
     if (honourLoop && lp && lp.end > lp.from) {
-      src.loop = true;
-      src.loopStart = lp.from / e.sampleRate;
-      src.loopEnd = Math.min(lp.end, words.length) / e.sampleRate;
+      /*
+       * An ALTERNATING loop, built into the buffer rather than played backwards.
+       *
+       * Web Audio's looper only goes forwards - there is no ping-pong mode and no way to
+       * drive the read position by hand without giving up the native player entirely. So the
+       * loop is written out twice, the second time reversed, and the native looper runs
+       * forward over the pair. That is the same sound by construction, and it costs one
+       * buffer copy at note-on instead of a ScriptProcessor for the life of the note.
+       *
+       * The lengths follow the hardware, measured in run 13: the reversed half begins with
+       * the loop's LAST frame and ends with its FIRST, so both ends are played twice as the
+       * direction turns and the cycle is 2N frames rather than 2N-2. Four loop lengths from
+       * 20 frames to 128 autocorrelated at exactly 2N on the machine.
+       *
+       * The C# and C++ engines do it properly, by reflecting the read position - they own
+       * their own resampler and can afford to. This is the browser's version of the same
+       * answer, not a different one.
+       */
+      var pong = null;
+
+      if (e.loopMode === 'A' && !loopOver) {
+        var from = Math.max(0, Math.round(lp.from));
+        var to = Math.min(Math.round(lp.end), buf.length);
+        var n = to - from;
+
+        if (n >= 2) {
+          pong = ac.createBuffer(1, to + n, rate);
+          var src0 = buf.getChannelData(0), dst = pong.getChannelData(0);
+
+          dst.set(src0.subarray(0, to), 0);
+          for (var r = 0; r < n; r++) dst[to + r] = src0[to - 1 - r];
+
+          src.buffer = pong;
+          src.loop = true;
+          src.loopStart = from / e.sampleRate;
+          src.loopEnd = (to + n) / e.sampleRate;
+        }
+      }
+
+      if (!pong) {
+        src.loop = true;
+        src.loopStart = lp.from / e.sampleRate;
+        src.loopEnd = Math.min(lp.end, words.length) / e.sampleRate;
+      }
     }
 
     /*
@@ -1651,13 +1747,57 @@
         g.gain.exponentialRampToValueAtTime(held, t0 + env.attack + env.decay);
       else g.gain.setValueAtTime(held, t0 + env.attack);
 
+      /*
+       * WARP: the pitch bend at note-on, if this keygroup has one.
+       *
+       * Scheduled as a value curve rather than setTargetAtTime, which is the obvious tool and
+       * the wrong one. setTargetAtTime decays the RATE exponentially towards its target; the
+       * machine decays the bend exponentially in CENTS, and the two are only the same for
+       * small bends. At three semitones they part by about seven cents a time constant in,
+       * which is audible on a tuned sample.
+       *
+       * Six time constants is the whole event - the bend is a quarter of a per cent of its
+       * depth by then - and 200 points across it is finer than any bend here needs.
+       */
+      var warpC = AkaiAudio.warpCents(vcf.kg.warpVelocity, vcf.kg.warpDepth, vcf.velocity);
+
+      if (warpC !== 0) {
+        var tau = AkaiAudio.warpSeconds(vcf.kg.warpTime);
+        var over = tau * 6, pts = 200;
+        var curve = new Float32Array(pts);
+
+        for (var w = 0; w < pts; w++)
+          curve[w] = speed * Math.pow(2, (warpC * Math.exp(-(w / (pts - 1)) * over / tau)) / 1200);
+
+        // A curve that collides with other automation throws rather than failing quietly;
+        // nothing else touches playbackRate here, but a note that plays flat beats one that
+        // does not play at all.
+        try {
+          src.playbackRate.setValueCurveAtTime(curve, t0, over);
+          src.playbackRate.setValueAtTime(speed, t0 + over);
+        } catch (err) {
+          src.playbackRate.value = speed;
+        }
+      }
+
       src.connect(g);
-      g.connect(out());
-      voices[key] = { src: src, gain: g, osc: osc, release: env.release, at: voiceSeq++ };
+      g.connect(panFor(vcf.kg) || out());
+      voices[key] = { src: src, gain: g, osc: osc, release: env.release,
+                      speed: speed, at: voiceSeq++ };
     } else {
       src.connect(out());
-      voices[key] = { src: src, gain: null, osc: osc, release: 0, at: voiceSeq++ };
+      voices[key] = { src: src, gain: null, osc: osc, release: 0,
+                      speed: speed, at: voiceSeq++ };
     }
+
+    /*
+     * A note started while the wheel is already off centre starts bent.
+     *
+     * After the voice is registered rather than before, so applyBend can simply walk the
+     * voices it knows about - one path for a note starting bent and for the wheel moving
+     * under a note that is already sounding, instead of two that could drift apart.
+     */
+    if (pitchWheel !== 8192) applyBend();
 
     /*
      * What the voice needs to render its own filter release when the key comes up.
@@ -2161,6 +2301,36 @@
    */
   var wheel = 0;
 
+  /*
+   * Where the pitch wheel is, 0..16383 with 8192 at rest, and how far it bends.
+   *
+   * Unlike the modwheel above, this one DOES reach notes already sounding - that is the whole
+   * point of a pitch wheel, and a bend that only applied to the next note would be useless.
+   * Every voice keeps its source node, so moving the wheel walks them and sets the playback
+   * rate; a note started while the wheel is off centre picks the bend up at note-on.
+   *
+   * The range is the machine's MIDI page setting, 1 to 12 semitones. It belongs to the machine
+   * rather than to a programme, so there is nothing on a disk to read it from.
+   */
+  var pitchWheel = 8192;
+  var bendRange = 2;
+
+  if ($('bendRange'))
+    $('bendRange').onchange = function () {
+      bendRange = parseInt($('bendRange').value, 10) || 2;
+      applyBend();                 // a note already sounding follows the new range at once
+    };
+
+  function applyBend() {
+    var ratio = AkaiAudio.bendRatio(pitchWheel, bendRange);
+
+    Object.keys(voices).forEach(function (k) {
+      var v = voices[k];
+      if (!v || !v.src || !v.speed) return;
+      try { v.src.playbackRate.value = v.speed * ratio; } catch (e) { /* already stopped */ }
+    });
+  }
+
   function onMidi(ev) {
     var d = ev.data;
     if (!d || d.length < 2) return;
@@ -2173,6 +2343,10 @@
     if (status === 0x90 && d[2] > 0) midiNoteOn(d[1], d[2]);
     else if (status === 0x80 || (status === 0x90 && d[2] === 0)) releaseVoice('midi:' + d[1]);
     else if (status === 0xB0 && d[1] === 1) wheel = d[2];                 // modwheel
+    else if (status === 0xE0 && d.length >= 3) {                          // pitch wheel
+      pitchWheel = (d[2] << 7) | (d[1] & 0x7F);
+      applyBend();
+    }
     else if (status === 0xB0 && (d[1] === 120 || d[1] === 123)) stop();   // all notes off
   }
 

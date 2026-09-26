@@ -11,6 +11,23 @@
  *
  * It renders from the same disk and the same plan the sampler will be given, so a mistake
  * in either shows up here rather than in the take.
+ *
+ * WHAT IT DOES NOT DO: PITCH.
+ *
+ * Every note is played at the sample's own rate, whatever key it was struck at. That was
+ * invisible until run 10, because every run before it set constant pitch on every keygroup and
+ * asked about level or brightness - nothing depended on the key changing the playback rate.
+ *
+ * Run 10's last section does depend on it: one keygroup across two octaves, struck at three
+ * keys, to tell a key follow from an attack offset. Rendering that gives three notes all at
+ * 1000 Hz where the machine will give 500, 1000 and 2000, so the dry run cannot exercise it.
+ *
+ * That is a gap in this tool and not in the measurement. The pitch analysis reads each clip in
+ * cents against its OWN settled pitch, so three notes at three frequencies is what it expects;
+ * the tracker was checked directly at 500, 1000 and 2500 Hz and read every one to under a tenth
+ * of a cent. Resampling here would mean interpolation and loop handling of its own, with its
+ * own artefacts, in the one tool whose job is to be trusted - so it is left undone and written
+ * down instead.
  */
 var fs = require('fs');
 var path = require('path');
@@ -129,8 +146,11 @@ function renderNote(clip, seconds) {
 
     // the amplitude release, from the key coming up
     if (t >= clip.hold && vca.release > 0.0005) {
-      var r = Math.min(1, (t - clip.hold) / vca.release);
-      gain *= Math.pow(1e-4, r);
+      // A RATE: CAL.VCA_RELEASE_DB in one release time, and it keeps falling. This used to
+      // run to 1e-4 over exactly one release time - 80 dB - which is twice the machine's
+      // speed at every setting. Unclamped, because a rate does not stop at a fixed depth.
+      var r = (t - clip.hold) / vca.release;
+      gain *= Math.pow(10, -Audio.CAL.VCA_RELEASE_DB / 20 * r);
     } else if (t >= clip.hold && vca.release <= 0.0005) {
       gain = 0;
     }

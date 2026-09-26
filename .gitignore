@@ -56,6 +56,34 @@ tools/ENVCAL6.img
 tools/ENVCAL6.hfe
 tools/ENVCAL7.img
 tools/ENVCAL7.hfe
+tools/ENVCAL8.img
+tools/ENVCAL8.hfe
+tools/ENVCAL9.img
+tools/ENVCAL9.hfe
+tools/ENVCAL10.img
+tools/ENVCAL10.hfe
+tools/ENVCAL11.img
+tools/ENVCAL11.hfe
+tools/ENVCAL12.img
+tools/ENVCAL12.hfe
+tools/ENVCAL13.img
+tools/ENVCAL13.hfe
+tools/ENVCAL14.img
+tools/ENVCAL14.hfe
+
+# ENVCAL7-cleared.hfe is ENVCAL7 with two empty keygroups removed - reproducible from the
+# disk and the tools, so it goes the same way as the rest.
+tools/ENVCAL7-cleared.hfe
+
+# ENVCAL7-paneledit.hfe is NOT ignored, and the exclamation mark below says so.
+#
+# The S950 wrote it. It is ENVCAL7 after three settings were changed on the panel and the
+# disk saved, and diffing it against ENVCAL7 is what identified velocity attack and release
+# as bytes 9 and 10 written one-to-one, and the velocity page's ON/OFF as bit 0x10 of the
+# flags. Nobody can make it again without the machine, which is the same reason real4.json
+# is carried - and unlike a library disk it holds nothing but noise this repository
+# generated, so there is nothing of anyone else's in it.
+!tools/ENVCAL7-paneledit.hfe
 
 # What envcal.js --json writes, for envfit.js to turn into the envelope table.
 #
