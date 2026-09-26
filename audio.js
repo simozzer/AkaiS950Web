@@ -872,29 +872,40 @@ var AkaiAudio = (function () {
      * the library are exactly this - the ARP2600 layers - and the obvious rule, treating
      * identical ranges as an overlap and fading across it, would have half-silenced them.
      *
-     * STILL PROVISIONAL, AND THE ONLY THING ON THIS DISK THAT IS.
+     * ZERO, AND THE MACHINE'S OWN DISTORTION IS WHAT PROVES IT.
      *
-     * This section is the loudest in the run - it is the one place where two keygroups both
-     * sound at nearly full level, so the two tones sum to the highest crest anywhere - and
-     * it is the only section that is still hitting the recording's ceiling. The rest of
-     * run 15 re-recorded completely clean; these five clips are 14.5% pinned.
+     * This read -3.7 dB for a long time, from a take with 25% of its samples pinned. It was
+     * wrong, and the way it came out is worth keeping.
      *
-     * Its readings have moved as the limiting has come off, and in one direction:
+     * The section is the loudest in the run - the one place two keygroups both sound at
+     * nearly full level - and it is the ONLY section that kept distorting after the
+     * recording level came down. Dropping the input 2.66 dB left the other three sections
+     * completely clean and changed this one's reading not at all: -0.7 dB apiece and a pair
+     * summing to +2.3, identical to the decimal across both takes, with its ceiling moving
+     * down by exactly the 2.66 dB the input had. A ceiling that scales with the recording
+     * gain is UPSTREAM of it. The S950 is distorting its own output, and no recording level
+     * will ever fix it.
      *
-     *     25% pinned (first take)    -3.7 dB apiece
-     *     14.5% pinned (second)      -0.7 dB apiece, the pair summing to +2.3
+     * That fact is the measurement. Two equal sources at L dB relative to one of them alone
+     * sum to 3.01 + L, and any compressive distortion can only REDUCE what the pair
+     * measures - intermodulation lands away from either tone's bin, never in it. So the
+     * measured sum is a lower bound:
      *
-     * A pair at full level sums to +3.0. So the honest reading of the trend is that
-     * identical ranges are probably NOT attenuated at all - the machine finds no lower and
-     * no upper keygroup, so there is nothing to fade and it simply layers them. That would
-     * remove the special case entirely.
+     *     sum >= +2.3      ->   L >= -0.71 dB
+     *     a layer cannot be louder than itself alone   ->   L <= 0
      *
-     * Not shipped on that, because it is a trend across two spoilt takes rather than a
-     * measurement. -3.7 is what was actually read, and it stays until one section of a
-     * quieter take says otherwise. Note that it is WRONG IN THE SAFE DIRECTION for the 17
-     * library pairs this applies to: too quiet by a few dB rather than too loud.
+     * which on the machine's 0.4 dB grid leaves 0 steps or 1, and nothing else. -3.7 would
+     * sum to -0.7 and -3.0 to 0.0; both are ruled out by three decibels.
+     *
+     * So identical ranges are NOT faded: the machine finds no lower keygroup and no upper
+     * one, so there is nothing to fade across, and it simply layers them - which is exactly
+     * why two full-level voices overflow its output and it saturates. 17 library pairs are
+     * this, the ARP2600 layers, and they have been playing 3.7 dB too quiet apiece.
+     *
+     * A step of 0.4 dB is still possible and would need a disk that trims both keygroups
+     * down at source, so the machine is not saturating while the ratio is read.
      */
-    XFADE_SAME_RANGE_DB: -3.7
+    XFADE_SAME_RANGE_DB: 0.0
   };
 
   /*
