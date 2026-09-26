@@ -1104,6 +1104,29 @@ if (sections.trajectory && sections.trajectory.at.length) {
       ? Math.max(REFERENCE_TOP, Math.min(1100, rough[Math.floor(rough.length * 0.2)] / 4))
       : REFERENCE_TOP;
 
+    /*
+     * THE WINDOW STAYS AT A QUARTER OF A SECOND EVEN THOUGH THE REFERENCE HAS JUST RISEN,
+     * and that was worth trying and getting wrong.
+     *
+     * The reasoning that says it could shrink is that a window has to hold enough cycles of
+     * the lowest reference band - 0.25 s is 37 of them at 150 Hz - and the coarse pass above
+     * has just raised the reference to a quarter of this clip's lowest corner, so at 550 Hz
+     * the same window holds 137. Tying the floor to 37 cycles of the reference it actually
+     * got shortens it to 0.07 s and looks like three times the time resolution for nothing.
+     *
+     * It is not. Run 21's dry run, where the answer is known because the render IS the
+     * model, came back with a decay of 50 timed at 1.37 s against 0.24, a decay of 60 at
+     * 0.10 s against 0.56, and two clips producing no reading at all. Cycle count is not
+     * what limits this: the corner comes from a 3 dB crossing in a levelled spectrum, and
+     * shortening the window widens the scatter in every band until the crossing is found on
+     * noise rather than on the filter. A quarter of a second is an empirical floor and it
+     * stands.
+     *
+     * What follows from that is a limit on the PLAN rather than on the analysis: an
+     * envelope stage this traces has to last several windows to be timed, so anything
+     * under about a second is bracketed rather than measured.
+     */
+
     var trace = [];
 
     for (var t = 0; t + win < span; t += hop) {
