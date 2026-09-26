@@ -17,11 +17,17 @@
  */
 var fs = require('fs');
 var path = require('path');
-var plan = require('./lfoplan.js');
+// --plan lfoplan2.js points the tool at another run, as the envelope tools do.
+var args = process.argv.slice(2);
+var planFile = './lfoplan.js';
+for (var ai = 0; ai < args.length; ai++) {
+  if (args[ai] === '--plan') { planFile = './' + args[ai + 1].split(/[/]/).pop(); args.splice(ai, 2); break; }
+}
+var plan = require(planFile);
 
 // beside this script rather than in whatever directory it was run from, so the file and
 // the test that reads it always agree
-var out = process.argv[2] || path.join(__dirname, 'AkaiLfoCalibration.mid');
+var out = args[0] || path.join(__dirname, 'AkaiLfoCalibration.mid');
 
 var DIVISION = 480;                       // ticks per quarter note
 var USEC_PER_QUARTER = 500000;            // 120 bpm
@@ -60,6 +66,18 @@ run.events.forEach(function (e) {
   if (e.kind === 'on') at(e.at, [0x90 | ch, e.note & 0x7F, e.velocity & 0x7F]);
   else if (e.kind === 'off') at(e.at, [0x80 | ch, e.note & 0x7F, 0]);
   else if (e.kind === 'cc') at(e.at, [0xB0 | ch, e.controller & 0x7F, e.value & 0x7F]);
+
+  /*
+   * CHANNEL PRESSURE, for the aftertouch depth in keygroup byte 21.
+   *
+   * Two bytes rather than three - the status and the value, with no controller number -
+   * which is the one place in this writer where the message length is not three.
+   *
+   * It is here because byte 21 was written off for years on the grounds that it is 0 in
+   * every one of the 1908 keygroups on the disks to hand. Those are one person's disks,
+   * and this reads anybody's.
+   */
+  else if (e.kind === 'pressure') at(e.at, [0xD0 | ch, e.value & 0x7F]);
 });
 
 at(run.seconds, [0xFF, 0x2F, 0x00]);      // end of track
@@ -93,7 +111,7 @@ run.clips.forEach(function (c) {
   var extra = c.pairWith !== null && c.pairWith !== undefined
                 ? '  + note ' + c.pairWith + ' (two octaves up) after ' +
                   c.stagger.toFixed(1) + 's'
-                : (c.cc ? '  + wheel' : '');
+                : (c.cc ? '  + ' + (c.source === 'pressure' ? 'pressure' : 'wheel') : '');
   console.log('      ' + c.from.toFixed(1).padStart(6) + 's  note ' +
               String(c.note).padStart(3) + '  ' + c.hold.toFixed(0).padStart(2) + 's  ' +
               c.sample.padEnd(5) + ' ' + c.label + extra);

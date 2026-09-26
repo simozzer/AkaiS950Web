@@ -49,7 +49,19 @@
 var fs = require('fs');
 var path = require('path');
 var cal = require('./vcfcal.js');
-var plan = require('./lfoplan.js');
+
+// --plan lfoplan2.js points the tool at another run, as the envelope tools do. Parsed here
+// rather than at the entry point because `plan` is read all through this file.
+var lfoArgs = process.argv.slice(2);
+var lfoPlanFile = './lfoplan.js';
+for (var pi = 0; pi < lfoArgs.length; pi++) {
+  if (lfoArgs[pi] === '--plan') {
+    lfoPlanFile = './' + lfoArgs[pi + 1].split(/[/]/).pop();
+    lfoArgs.splice(pi, 2);
+    break;
+  }
+}
+var plan = require(lfoPlanFile);
 
 var FRAME_RATE = 500;              // pitch track frames per second
 var MAX_LFO_HZ = 40;               // nothing on this machine is going to be faster
@@ -955,13 +967,47 @@ function analyse(file) {
   }
   console.log('');
 
-  // -------------------------------------------------------------- modwheel
-  console.log('MODWHEEL  (byte 22, keygroup depth 0)');
-  var wheelClip = by.wheel && by.wheel[0];
-  results.wheel = [];
+  /*
+   * ---------------------------------------------- the two performance controllers
+   *
+   * The modwheel (byte 22) and AFTERTOUCH (byte 21) do the same job from different
+   * sources: both scale the LFO's depth from a controller the player moves. So they are
+   * read by the same code, once each.
+   *
+   * The analysis does not care how the steps reached the machine. A clip carries its step
+   * list in `cc` whichever it is, and only the MIDI writer knows that one goes out as
+   * controller 1 and the other as channel pressure - so adding aftertouch here costs a
+   * loop rather than a copy of forty lines.
+   *
+   * Byte 21 was written off for years because it is 0 in all 1908 keygroups on the disks
+   * to hand. Those are one person's disks and this reads anybody's.
+   */
+  [{ key: 'wheel', half: 'wheelhalf', title: 'MODWHEEL  (byte 22, keygroup depth 0)',
+     byte: 22, mover: 'wheel' },
+   { key: 'touch', half: 'touchhalf', title: 'AFTERTOUCH  (byte 21, keygroup depth 0)',
+     byte: 21, mover: 'pressure' },
 
-  // The wheel section reads a fundamental and has to turn it into a peak, which needs
-  // the waveform. It used to assume a triangle, which was a guess dressed as a constant;
+   /*
+    * Both controllers at once, which nobody has ever played into this machine on purpose.
+    *
+    * The clip holds the wheel up throughout and brings the pressure in halfway, so its two
+    * steps are "wheel alone" and "wheel and pressure together". If the depths ADD the
+    * second reading is about twice the first; if the machine takes the larger of the two
+    * they are the same. There is no half-byte clip here - the question is not the shape of
+    * a byte's law but whether two paths sum - so `half` is null and the block skips it.
+    */
+   { key: 'touchboth', half: null, byte: 21, mover: 'pressure',
+     title: 'BOTH AT ONCE  (bytes 21 and 22 both 99, wheel already up)' }
+  ].forEach(function (src) {
+
+  if (!(by[src.key] && by[src.key].length) && !(by[src.half] && by[src.half].length)) return;
+
+  console.log(src.title);
+  var wheelClip = by[src.key] && by[src.key][0];
+  results[src.key] = [];
+
+  // The section reads a fundamental and has to turn it into a peak, which needs the
+  // waveform. It used to assume a triangle, which was a guess dressed as a constant;
   // the machine turned out to run a sine, and the difference is 23%. Take the shape the
   // shape section actually found, and say so when there is none to take.
   var wheelShape = (results.shape && results.shape.shape && results.shape.shape.length &&
@@ -976,10 +1022,10 @@ function analyse(file) {
                             t2.cents.length, t2.frameRate);
       var lfoHz = steady ? steady.hz : null;
       if (!lfoHz) {
-        console.log('  no steady wobble at the top of the wheel - nothing to read');
+        console.log('  no steady wobble at the top of the ' + src.mover + ' - nothing to read');
       } else {
         var fix = 1 / Math.max(0.2, t2.response(lfoHz));
-        console.log('  wheel    cents   (the LFO is at ' + fmt(lfoHz, 2) + ' Hz)');
+        console.log('  ' + src.mover.padEnd(8) + ' cents   (the LFO is at ' + fmt(lfoHz, 2) + ' Hz)');
         wheelClip.cc.forEach(function (step, i) {
           var next = wheelClip.cc[i + 1];
           var s0 = step.at + 0.35, s1 = (next ? next.at : wheelClip.hold) - 0.05;
@@ -996,33 +1042,38 @@ function analyse(file) {
           var b = bin(t2.cents, f0, f1, lfoHz, t2.frameRate);
           var cents = b.amp * fix / wheelCrest;
           console.log('    ' + String(step.value).padStart(4) + '  ' + fmt(cents, 2, 8));
-          results.wheel.push({ cc: step.value, cents: cents, sine: b.amp * fix });
+          results[src.key].push({ cc: step.value, cents: cents, sine: b.amp * fix });
         });
 
-        var wheelFit = line(results.wheel.map(function (p) { return { x: p.cc, y: p.cents }; }));
-        results.wheelFit = wheelFit;
+        var wheelFit = line(results[src.key].map(function (p) { return { x: p.cc, y: p.cents }; }));
+        results[src.key + 'Fit'] = wheelFit;
         if (wheelFit)
           console.log('  ' + fmt(wheelFit.slope * 127, 2) +
-                      ' cents across the whole wheel at byte 22 = 99, r2 ' + fmt(wheelFit.r2, 3));
+                      ' cents across the whole ' + src.mover + ' at byte ' + src.byte +
+                      ' = 99, r2 ' + fmt(wheelFit.r2, 3));
         console.log('  (read as a ' + (wheelShape ? wheelShape.name : 'sine, for want of anything better') +
                     ', which is what the shape section found)');
       }
     }
   }
 
-  var halfClip = by.wheelhalf && by.wheelhalf[0];
+  var halfClip = by[src.half] && by[src.half][0];
   if (halfClip) {
     var mh = measure(x, rate, halfClip, at.offset);
-    results.wheelHalf = mh;
-    console.log('  wheel 127 at byte 22 = 50: ' + fmt(mh.depthCents, 2) + ' cents');
-    if (results.wheel.length) {
-      var full = results.wheel[results.wheel.length - 1];
-      console.log('  against ' + fmt(full.cents, 2) + ' at byte 22 = 99, a ratio of ' +
+    results[src.key + 'Half'] = mh;
+    console.log('  ' + src.mover + ' 127 at byte ' + src.byte + ' = 50: ' +
+                fmt(mh.depthCents, 2) + ' cents');
+    if (results[src.key].length) {
+      var full = results[src.key][results[src.key].length - 1];
+      console.log('  against ' + fmt(full.cents, 2) + ' at byte ' + src.byte +
+                  ' = 99, a ratio of ' +
                   fmt(full.cents > 0 ? mh.depthCents / full.cents : 0, 3) +
                   ' where proportional would be 0.505');
     }
   }
   console.log('');
+
+  });   // each performance controller
 
   // --------------------------------------------------------------- desync
   console.log('DESYNC  (bit 2 of byte 18)');
@@ -1139,7 +1190,7 @@ module.exports = {
 };
 
 if (require.main === module) {
-  var file = process.argv[2];
+  var file = lfoArgs[0];
   if (!file) {
     console.log('');
     console.log('usage: node lfocal.js <take.wav>');

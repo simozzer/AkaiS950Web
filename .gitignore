@@ -36,6 +36,13 @@ node_modules/
 tools/LFOCAL.img
 tools/LFOCAL.hfe
 
+# The aftertouch disk, built the same way from lfoplan2.js:
+#
+#   node tools/lfodisk.js build LFOCAL2 --plan lfoplan2.js
+#   node tools/lfodisk.js check tools/LFOCAL2.img --plan lfoplan2.js
+tools/LFOCAL2.img
+tools/LFOCAL2.hfe
+
 # The filter envelope disks, built from nothing by envdisk.js - noise from a fixed seed and
 # a programme whose every keygroup comes from the plan. Deterministic, so they are rebuilt
 # rather than carried, the same as LFOCAL above:

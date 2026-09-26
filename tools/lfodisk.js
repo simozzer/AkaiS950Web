@@ -31,9 +31,16 @@
 var fs = require('fs');
 var path = require('path');
 var Akai = require('../akai.js');
-var plan = require('./lfoplan.js');
 
+// --plan lfoplan2.js points the tool at another run, the way the envelope tools have always
+// worked. Without it the first one is used, so every existing command still means what it
+// did. See envdisk.js, which this mirrors.
 var args = process.argv.slice(2);
+var planFile = './lfoplan.js';
+for (var ai = 0; ai < args.length; ai++) {
+  if (args[ai] === '--plan') { planFile = './' + args[ai + 1].split(/[/]/).pop(); args.splice(ai, 2); break; }
+}
+var plan = require(planFile);
 var mode = (args[0] === 'build' || args[0] === 'check') ? args.shift() : 'check';
 var target = args[0] || path.join(__dirname, 'LFOCAL');
 
