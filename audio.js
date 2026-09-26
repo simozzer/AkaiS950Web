@@ -601,11 +601,45 @@ var AkaiAudio = (function () {
      * as short as an rms window can time; reaching below it wants the amplitude tracked by
      * Goertzel on a tone instead, which is a different rig.
      */
+    /*
+     * THE LOW BIT OF THE BYTE IS IGNORED, AND RUN 23 CAUGHT IT IN THE ACT.
+     *
+     * Run 19 walked this curve in fives and found the steps uneven in a way no smooth curve
+     * makes - ten units double the time, but the two fives inside each decade go x1.60 then
+     * x1.34, four times each. Run 23 went one unit at a time from 45 to 56:
+     *
+     *     stored    45     46     47     48     49     50     51     52     53     54     55     56
+     *     dB/s   223.6  191.1  192.2  163.5  163.7  141.3  141.4  121.2  121.5  103.8  103.8   88.9
+     *
+     * (46,47), (48,49), (50,51), (52,53), (54,55) - each pair identical to better than
+     * half a per cent, where the step between pairs is fifteen. The envelope is a counter
+     * and TWO STORED UNITS SHARE EACH COUNT: the curve is indexed by floor(stored / 2).
+     *
+     * And the counter is geometric. Read by count rather than by byte, the ratios are
+     * 1.1667, 1.1715, 1.1574, 1.1648, 1.1691, 1.1676 - constant at 1.166, which explains
+     * run 19's alternation exactly. Five stored units is two counter steps or three:
+     *
+     *     1.166^2 = 1.360   against the 1.34 run 19 measured
+     *     1.166^3 = 1.585   against the 1.60 run 19 measured
+     *
+     * So the odd values are not interpolated any more, they are floored - see envSeconds.
+     * Every entry here is indexed at the EVEN member of its pair, which is why run 19's
+     * readings at 15, 25, 35, 45 and 55 now sit at 14, 24, 34, 44 and 54.
+     *
+     * Where the two runs overlap they agree to 2.5%: run 19 gave 0.19504, 0.30697 and
+     * 0.41063 at counts 22, 25 and 27, and run 23 gave 0.19007, 0.30067 and 0.40944. The
+     * entries below are the mean of the two.
+     *
+     * The top of the curve is NOT 1.166 a step and the existing measurements say so - 84
+     * and 90 are three counts apart for 2% of growth. Whatever the counter does up there
+     * it stops being geometric, and those points stand as measured.
+     */
     ENV_TIME: [
-      [0, 0.01040], [15, 0.01963], [20, 0.03166], [25, 0.04182], [30, 0.06582],
-      [35, 0.08949], [40, 0.14385], [45, 0.19504], [50, 0.30697], [55, 0.41063],
-      [60, 0.7224], [65, 0.8806], [70, 1.4037], [80, 2.8136], [85, 4.0370],
-      [90, 4.1172], [95, 8.0947], [99, 10.7401]
+      [0, 0.01040], [14, 0.01963], [20, 0.03166], [24, 0.04182], [30, 0.06582],
+      [34, 0.08949], [40, 0.14385], [44, 0.19256], [46, 0.22176], [48, 0.25978],
+      [50, 0.30382], [52, 0.35023], [54, 0.41004], [56, 0.47807],
+      [60, 0.7224], [64, 0.8806], [70, 1.4037], [80, 2.8136], [84, 4.0370],
+      [90, 4.1172], [94, 8.0947], [98, 10.7401]
     ],
 
     /*
@@ -684,9 +718,40 @@ var AkaiAudio = (function () {
      * new points change is that the climb out of the gate is now anchored at 8 and 20 instead
      * of running unguided all the way to 30.
      */
+    /*
+     * RUN 23 WALKED THE BOTTOM OF THIS LADDER BY SETTING THE BYTE.
+     *
+     * It had two points below stored 30 - 8 and 20 - and BOTH were reached sideways, by
+     * setting a base attack of 70 and using byte 9 to pull the effective value down. They
+     * inherited whatever the velocity rule got wrong, and everything between them and
+     * below them was interpolation.
+     *
+     * Twelve settings, measured directly, and the counter law holds all the way down:
+     *
+     *     stored     8    10    12    15    18    20    22    25    28    30    35    40
+     *     seconds .018  .026  .038  .058  .079  .097  .120  .154  .194  .227  .311  .392
+     *     5.4/n    300   208   142    93    68    56    45    35    28    24    17    14
+     *
+     * Every one within 2% of 5.4 over a whole number, and most within 0.6%.
+     *
+     * The two it already had came out differently. Stored 20 was right - 56 against the
+     * table's 55 - and stored 8 was 11% out, 300 against 270. Which is the one the note on
+     * this item warned about: a value reached through another rule carries that rule's
+     * error, and the two sideways points disagree with each other about how much.
+     *
+     * Stored 0 is still 7000 and still a guess. It is the hard gate: extrapolating the
+     * measured points downward puts it near 0.8 ms, which is under a sample at 44.1 kHz,
+     * and nothing here can tell that from instant.
+     *
+     * Whether the attack also ignores the low bit, as ENV_TIME turned out to, is NOT
+     * measured - this ladder steps by two or more everywhere. It is a different counter
+     * with a different law, so the answer does not carry across.
+     */
     VCA_ATTACK_STEPS: [
-      [0, 7000], [8, 270], [20, 55], [30, 26], [40, 15], [50, 9], [55, 7], [60, 6], [65, 5],
-      [70, 4], [75, 4], [80, 3], [85, 3], [90, 2], [95, 2], [99, 2]
+      [0, 7000], [8, 300], [10, 208], [12, 142], [15, 93], [18, 68], [20, 56],
+      [22, 45], [25, 35], [28, 28], [30, 24], [35, 17], [40, 14],
+      [50, 9], [55, 7], [60, 6], [65, 5], [70, 4], [75, 4], [80, 3], [85, 3],
+      [90, 2], [95, 2], [99, 2]
     ],
 
     // The filter's envelope runs quicker than the VCA's for the same stored number:
@@ -1219,7 +1284,19 @@ var AkaiAudio = (function () {
    */
   function envSeconds(stored) {
     var T = CAL.ENV_TIME;
-    var v = clamp(stored, 0, 99);
+
+    /*
+     * THE LOW BIT IS DROPPED BEFORE ANYTHING ELSE HAPPENS.
+     *
+     * Two stored units share each envelope time - run 23 read every value from 45 to 56
+     * and found (46,47), (48,49), (50,51), (52,53) and (54,55) identical to better than
+     * half a per cent, against fifteen per cent between the pairs. See CAL.ENV_TIME.
+     *
+     * This is a floor and not a round, because the pairs run even-then-odd: 47 plays what
+     * 46 plays, not what 48 plays. Rounding would be wrong by a whole counter step on
+     * every odd value.
+     */
+    var v = Math.floor(clamp(stored, 0, 99) / 2) * 2;
     var seconds = T[T.length - 1][1];
 
     for (var i = 1; i < T.length; i++) {
